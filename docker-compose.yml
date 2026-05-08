@@ -1,0 +1,114 @@
+# ============================================================
+# MASKARA AI Trading Bot — Docker Compose
+# ============================================================
+# Сервисы:
+#   - api       (FastAPI webhook сервер)
+#   - postgres  (журнал сделок, AI память)
+#   - redis     (кэш рынка, дедупликация webhook, rate limit)
+#
+# Запуск:
+#   docker-compose up --build
+#
+# Логи отдельного сервиса:
+#   docker-compose logs -f api
+# ============================================================
+
+services:
+  # ----------------------------------------------------------
+  # FastAPI Webhook Server (Stage 1)
+  # ----------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maskara_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      # Логи доступны хосту (logs/maskara.log)
+      - ./logs:/app/logs
+      # Hot reload в разработке (опционально, можно убрать в проде)
+      - ./app:/app/app:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - maskara_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------
+  # PostgreSQL — журнал сделок, AI memory, strategy versions
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: maskara_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Пробрасываем только локально — снаружи закрыто
+      - "127.0.0.1:5432:5432"
+    networks:
+      - maskara_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # Redis — real-time market cache, rate limit, дедупликация
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: maskara_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - maskara_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# --------------------------------------------------------------
+# Тома для персистентности данных (выживают перезапуск контейнеров)
+# --------------------------------------------------------------
+volumes:
+  postgres_data:
+    name: maskara_postgres_data
+  redis_data:
+    name: maskara_redis_data
+
+# --------------------------------------------------------------
+# Изолированная сеть — сервисы видят друг друга по имени
+# (api → postgres, api → redis)
+# --------------------------------------------------------------
+networks:
+  maskara_net:
+    name: maskara_net
+    driver: bridge

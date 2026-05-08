@@ -1,0 +1,41 @@
+# ============================================================
+# MASKARA AI Trading Bot — Production dependencies
+# ============================================================
+# Все версии зафиксированы (==) для воспроизводимости.
+# Обновление: меняем версию → запускаем тесты → коммитим оба файла.
+#
+# Установка:  pip install -r requirements.txt
+# ============================================================
+
+# --- Web framework ---
+fastapi==0.115.5
+uvicorn[standard]==0.32.1   # [standard] = uvloop + httptools (быстрее)
+
+# --- Pydantic v2 ---
+pydantic==2.10.3
+pydantic-settings==2.7.0    # для Settings из .env
+
+# --- БД ---
+sqlalchemy==2.0.36
+asyncpg==0.30.0             # async драйвер для приложения
+psycopg2-binary==2.9.10     # sync драйвер для Alembic миграций
+alembic==1.14.0
+
+# --- Redis ---
+redis==5.2.1                # включает и sync, и async (redis.asyncio)
+
+# --- Bybit (Stage 2) ---
+pybit==5.9.1                # Bybit Unified V5 API
+
+# --- HTTP клиент (Stage 9 — внешние API) ---
+httpx==0.28.1               # async HTTP, используется и в тестах
+
+# --- Telegram (Stage 4) ---
+python-telegram-bot==21.9   # async API для Telegram Bot
+
+# --- WebSocket (Stage 5) ---
+websockets==14.1
+
+# --- Утилиты ---
+python-dotenv==1.0.1        # backup для случаев когда pydantic-settings не используем
+orjson==3.10.12             # быстрая сериализация JSON

@@ -1,0 +1,56 @@
+# Секреты — НИКОГДА не должны попадать в образ
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Виртуальные окружения
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Логи и данные
+logs/*
+!logs/.gitkeep
+*.log
+
+# Docker
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile
+.dockerignore
+
+# Документация / проч.
+README.md
+*.md
+docs/
+
+# Тесты копируются в dev-образ для возможности `make test`
+# (в проде сборке INSTALL_DEV=false и pytest всё равно не установится)
+# tests/  ← намеренно НЕ исключаем
