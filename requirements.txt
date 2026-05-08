@@ -25,7 +25,7 @@ alembic==1.14.0
 redis==5.2.1                # включает и sync, и async (redis.asyncio)
 
 # --- Bybit (Stage 2) ---
-pybit==5.9.1                # Bybit Unified V5 API
+pybit==5.10.0                # Bybit Unified V5 API
 
 # --- HTTP клиент (Stage 9 — внешние API) ---
 httpx==0.28.1               # async HTTP, используется и в тестах
