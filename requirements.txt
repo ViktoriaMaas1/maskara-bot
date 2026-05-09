@@ -39,3 +39,6 @@ websockets==14.1
 # --- Утилиты ---
 python-dotenv==1.0.1        # backup для случаев когда pydantic-settings не используем
 orjson==3.10.12             # быстрая сериализация JSON
+FTHARdtH5SlZd0HrRg
+827tKscROlWqUg06HQGXxdOz176Cv4wCEVyg
+

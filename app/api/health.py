@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.api.dependencies import SettingsDep
+from app.bybit.rest_client import BybitRestClient
 from app.database.db import healthcheck_db
 from app.utils.redis_client import get_redis
 
@@ -47,19 +48,20 @@ async def healthcheck(settings: SettingsDep) -> HealthResponse:
         status="ok",
         app_env=settings.app_env.value,
         bybit_testnet=settings.bybit_testnet,
-        version="0.1.0-stage1",
+        version="0.2.0-stage2",
     )
 
 
 @router.get("/health/ready", summary="Readiness")
-async def readiness() -> JSONResponse:
+async def readiness(settings: SettingsDep) -> JSONResponse:
     """
     Readiness — бот готов принимать трафик?
-    Проверяет связь с PostgreSQL и Redis.
+    Проверяет связь с PostgreSQL, Redis и Bybit.
     """
     checks = {
         "postgres": await healthcheck_db(),
         "redis": False,
+        "bybit": False,
     }
 
     # Проверка Redis
@@ -69,6 +71,17 @@ async def readiness() -> JSONResponse:
         checks["redis"] = True
     except Exception as e:
         logger.warning("Redis healthcheck failed: %s", e)
+
+    # Проверка Bybit (только если ключи заданы)
+    if settings.bybit_api_key and settings.bybit_api_secret:
+        try:
+            bybit = BybitRestClient.from_settings(settings)
+            checks["bybit"] = await bybit.health_check()
+        except Exception as e:
+            logger.warning("Bybit healthcheck failed: %s", e)
+    else:
+        # ключи не заданы — это норма для Stage 1, но в Stage 2+ должны быть
+        logger.warning("Bybit keys not configured")
 
     all_ok = all(checks.values())
     payload = ReadinessResponse(
