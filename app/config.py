@@ -95,6 +95,25 @@ class Settings(BaseSettings):
     bybit_api_secret: SecretStr = Field(default=SecretStr(""))
     bybit_readonly_mode: bool = Field(default=True)
 
+    # ====================================================
+    # RISK MANAGEMENT (Stage 3)
+    # ====================================================
+    # Kill switches (Stage 6/Telegram переключит на BotState в БД)
+    kill_switch_enabled: bool = Field(default=False)
+    bot_paused: bool = Field(default=False)
+
+    # Лимиты на сделку
+    min_final_score_trade: int = Field(default=70, ge=0, le=100)
+    max_risk_per_trade: float = Field(default=0.01, gt=0, le=0.05)
+    max_spread_bps: float = Field(default=5.0, gt=0)
+
+    # Дневные лимиты
+    max_daily_loss: float = Field(default=0.03, gt=0, le=0.5)
+    max_consecutive_losses: int = Field(default=3, ge=1)
+
+    # Лимиты позиций
+    max_open_positions_per_symbol: int = Field(default=1, ge=1)
+
     # =========================================================
     # TELEGRAM (Stage 4)
     # =========================================================
