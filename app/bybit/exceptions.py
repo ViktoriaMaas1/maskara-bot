@@ -48,3 +48,10 @@ class BybitAPIError(BybitError):
         super().__init__(message)
         self.code = code
         self.method = method
+
+
+class BybitReadOnlyError(BybitError):
+    """Попытка выполнить write-операцию при включённом BYBIT_READONLY_MODE.
+
+    Не ретраим — это намеренная блокировка на стороне бота, а не временное состояние.
+    """

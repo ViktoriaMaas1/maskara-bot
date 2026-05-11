@@ -66,11 +66,10 @@ async def main() -> int:
 
     env_label = "TESTNET" if settings.bybit_testnet else "MAINNET ⚠️⚠️⚠️"
     _ok(f"Settings loaded — environment: {env_label}")
-    print(f"   API key: {settings.bybit_api_key[:6]}***{settings.bybit_api_key[-4:]}")
+    print(f"   API key: {settings.bybit_api_key.get_secret_value()[:6]}***{settings.bybit_api_key.get_secret_value()[-4:]}")
 
     if not settings.bybit_testnet:
-        _fail("REFUSING TO RUN ON MAINNET — set BYBIT_TESTNET=true in .env")
-        return 1
+        print("⚠️  WARNING: running on MAINNET. Bot kill-switch (BYBIT_READONLY_MODE) protects writes.")
 
     # 2. Подключение
     _section("2. Connection (public endpoint)")

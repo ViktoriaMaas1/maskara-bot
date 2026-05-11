@@ -43,6 +43,7 @@ from app.bybit.exceptions import (
     BybitAuthError,
     BybitNetworkError,
     BybitRateLimitError,
+    BybitReadOnlyError,
 )
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class BybitRestClient:
         testnet: bool = True,
         recv_window: int = 5000,
         timeout: int = 10,
+        readonly_mode: bool = True,
     ) -> None:
         if not api_key or not api_secret:
             raise BybitAuthError("API key/secret are empty")
@@ -146,6 +148,7 @@ class BybitRestClient:
         self._api_key = api_key
         self._testnet = testnet
         self._timeout = timeout
+        self._readonly_mode = readonly_mode
 
         self._http = HTTP(
             testnet=testnet,
@@ -166,9 +169,10 @@ class BybitRestClient:
         """Создать клиент из Pydantic Settings."""
         s = settings or get_settings()
         return cls(
-            api_key=s.bybit_api_key,
-            api_secret=s.bybit_api_secret,
+            api_key=s.bybit_api_key.get_secret_value(),
+            api_secret=s.bybit_api_secret.get_secret_value(),
             testnet=s.bybit_testnet,
+        readonly_mode=s.bybit_readonly_mode,
         )
 
     # --------------------------------------------------------
@@ -380,6 +384,12 @@ class BybitRestClient:
         ⚠️ Stage 2 ТОЛЬКО реализует метод. Реальное использование — Stage 4
         после внедрения Risk Manager.
         """
+
+        if self._readonly_mode:
+            raise BybitReadOnlyError(
+                "Write operation 'place_market_order' blocked: BYBIT_READONLY_MODE is enabled"
+            )
+
         params: dict[str, Any] = {
             "category": category,
             "symbol": symbol,
@@ -410,6 +420,12 @@ class BybitRestClient:
         category: str = "linear",
     ) -> dict[str, Any]:
         """Отменить ордер. Нужен либо order_id, либо order_link_id."""
+
+        if self._readonly_mode:
+            raise BybitReadOnlyError(
+                "Write operation 'cancel_order' blocked: BYBIT_READONLY_MODE is enabled"
+            )
+
         if not order_id and not order_link_id:
             raise ValueError("Either order_id or order_link_id required")
 

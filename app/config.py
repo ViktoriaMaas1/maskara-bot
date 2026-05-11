@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     bybit_testnet: bool = Field(default=True)
     bybit_api_key: SecretStr = Field(default=SecretStr(""))
     bybit_api_secret: SecretStr = Field(default=SecretStr(""))
+    bybit_readonly_mode: bool = Field(default=True)
 
     # =========================================================
     # TELEGRAM (Stage 4)
