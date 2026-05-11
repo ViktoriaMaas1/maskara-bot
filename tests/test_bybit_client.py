@@ -20,6 +20,7 @@ from app.bybit.exceptions import (
     BybitAuthError,
     BybitNetworkError,
     BybitRateLimitError,
+    BybitReadOnlyError,
 )
 from app.bybit.rest_client import BybitRestClient
 
@@ -43,6 +44,7 @@ def client(mock_http):
         api_key="test_key_1234567890",
         api_secret="test_secret_abcdef",
         testnet=True,
+        readonly_mode=False,
     )
 
 
@@ -299,3 +301,36 @@ async def test_place_market_order_correct_params(client, mock_http):
 async def test_cancel_order_requires_id(client, mock_http):
     with pytest.raises(ValueError):
         await client.cancel_order(symbol="BTCUSDT")  # ни order_id, ни link_id
+
+
+@pytest.mark.asyncio
+async def test_place_market_order_blocked_when_readonly(mock_http):
+    """Kill switch: readonly_mode=True блокирует place_market_order."""
+    readonly_client = BybitRestClient(
+        api_key="test_key_1234567890",
+        api_secret="test_secret_abcdef",
+        testnet=True,
+        readonly_mode=True,
+    )
+    with pytest.raises(BybitReadOnlyError):
+        await readonly_client.place_market_order(
+            symbol="BTCUSDT",
+            side="Buy",
+            qty="0.001",
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancel_order_blocked_when_readonly(mock_http):
+    """Kill switch: readonly_mode=True блокирует cancel_order."""
+    readonly_client = BybitRestClient(
+        api_key="test_key_1234567890",
+        api_secret="test_secret_abcdef",
+        testnet=True,
+        readonly_mode=True,
+    )
+    with pytest.raises(BybitReadOnlyError):
+        await readonly_client.cancel_order(
+            symbol="BTCUSDT",
+            order_id="test_order_id_123",
+        )
