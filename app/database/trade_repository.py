@@ -1,9 +1,12 @@
 """
-Repository pattern - слой между ORM и бизнес-логикой.
+Repository pattern — слой между ORM и бизнес-логикой.
 
 Stage 3: реализованы 3 read-only метода для Risk Manager.
-Stage 11 (планируется): create_open_trade, close_trade, get_open_position,
-                       get_last_n_trades.
+Stage 4 (сейчас): добавлены write-методы create_open_trade, close_trade,
+                  get_open_trade_by_id — нужны Execution Engine для
+                  замыкания цикла "открыли позицию → записали в БД →
+                  Risk Manager видит её при следующей проверке".
+Stage 11 (планируется): get_last_n_trades, market snapshots, decisions.
 
 Зачем repository а не запросы в endpoint'ах:
 - Можно мокать в тестах (вместо реальной БД)
@@ -12,8 +15,10 @@ Stage 11 (планируется): create_open_trade, close_trade, get_open_posi
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +27,14 @@ from app.database.models import Trade
 
 
 class TradeRepository:
-    """Read-only методы для Risk Manager (Stage 3)."""
+    """Read-only методы для Risk Manager (Stage 3) + write-методы (Stage 4)."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    # ============================================================
+    # READ-ONLY методы (Stage 3) — для Risk Manager
+    # ============================================================
 
     async def get_daily_pnl(self) -> Decimal:
         """
@@ -56,7 +65,6 @@ class TradeRepository:
         )
         result = await self.session.execute(stmt)
         rows = result.scalars().all()
-
         count = 0
         for r in rows:
             if r == "loss":
@@ -77,3 +85,137 @@ class TradeRepository:
         )
         result = await self.session.execute(stmt)
         return int(result.scalar() or 0)
+
+    # ============================================================
+    # WRITE методы (Stage 4) — для Execution Engine
+    # ============================================================
+
+    async def create_open_trade(
+        self,
+        *,
+        symbol: str,
+        side: str,                          # "Buy" / "Sell" (Bybit формат)
+        entry_price: Decimal,
+        stop_loss: Decimal,
+        take_profit: Decimal,
+        position_size: Decimal,
+        leverage: int,
+        bybit_order_id: Optional[str] = None,
+        signal_id: Optional[uuid.UUID] = None,
+        ai_decision_id: Optional[uuid.UUID] = None,
+        timeframe: Optional[str] = None,
+        risk_percent: Optional[Decimal] = None,
+        final_score: Optional[int] = None,
+        scores_breakdown: Optional[dict] = None,
+        entry_reason: Optional[str] = None,
+    ) -> Trade:
+        """
+        Создать запись об открытой сделке.
+
+        Вызывается ExecutionEngine.open_position() СРАЗУ после успешного
+        подтверждения от Bybit (place_market_order вернул retCode=0).
+
+        Минимально обязательные поля: symbol, side, entry_price, stop_loss,
+        take_profit, position_size, leverage. Остальное — опционально и
+        заполняется по мере доступности (на Stage 4 многие поля будут None).
+
+        Returns:
+            Свежий Trade с id и created_at, уже закоммиченный в БД.
+        """
+        trade = Trade(
+            symbol=symbol,
+            side=side,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            position_size=position_size,
+            leverage=leverage,
+            status="open",
+            bybit_order_id=bybit_order_id,
+            signal_id=signal_id,
+            ai_decision_id=ai_decision_id,
+            timeframe=timeframe,
+            risk_percent=risk_percent,
+            final_score=final_score,
+            scores_breakdown=scores_breakdown,
+            entry_reason=entry_reason,
+        )
+        self.session.add(trade)
+        await self.session.commit()
+        await self.session.refresh(trade)
+        return trade
+
+    async def get_open_trade_by_id(self, trade_id: uuid.UUID) -> Optional[Trade]:
+        """
+        Найти открытую сделку по UUID.
+
+        Возвращает None если:
+        - сделка не найдена
+        - сделка уже закрыта (status != "open")
+
+        Используется ExecutionEngine.close_position() для поиска
+        перед обновлением.
+        """
+        stmt = select(Trade).where(
+            Trade.id == trade_id,
+            Trade.status == "open",
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def close_trade(
+        self,
+        *,
+        trade_id: uuid.UUID,
+        exit_price: Decimal,
+        pnl: Decimal,
+        fees: Optional[Decimal] = None,
+        slippage: Optional[Decimal] = None,
+        exit_reason: Optional[str] = None,
+    ) -> Optional[Trade]:
+        """
+        Закрыть открытую сделку — обновить поля результата.
+
+        Автоматически выставляет:
+        - status = "closed"
+        - closed_at = текущее время UTC
+        - result = "win" / "loss" / "breakeven" в зависимости от pnl
+        - duration_sec = разница между created_at и closed_at
+
+        Returns:
+            Обновлённый Trade или None если сделка не найдена / уже закрыта.
+        """
+        trade = await self.get_open_trade_by_id(trade_id)
+        if trade is None:
+            return None
+
+        now = datetime.now(timezone.utc)
+
+        # Determine result
+        if pnl > 0:
+            result = "win"
+        elif pnl < 0:
+            result = "loss"
+        else:
+            result = "breakeven"
+
+        # Duration в секундах
+        if trade.created_at is not None:
+            # created_at — timezone-aware (server_default=now())
+            duration_sec = int((now - trade.created_at).total_seconds())
+        else:
+            duration_sec = None
+
+        trade.exit_price = exit_price
+        trade.pnl = pnl
+        trade.fees = fees
+        trade.slippage = slippage
+        trade.exit_reason = exit_reason
+        trade.status = "closed"
+        trade.closed_at = now
+        trade.result = result
+        trade.duration_sec = duration_sec
+
+        await self.session.commit()
+        await self.session.refresh(trade)
+        return trade

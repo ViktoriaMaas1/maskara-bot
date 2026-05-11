@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     telegram_chat_id: str = Field(default="")
 
     # =========================================================
+    # =========================================================
+    # EXECUTION ENGINE (Stage 4)
+    # =========================================================
+    default_leverage: int = Field(default=5, ge=1, le=100)
+    execution_order_link_id_prefix: str = Field(default="maskara")
+    execution_max_retries: int = Field(default=3, ge=0, le=10)
+    execution_retry_delay_sec: float = Field(default=1.0, ge=0.1, le=10.0)
+
     # EXTERNAL DATA (Stage 9)
     # =========================================================
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))

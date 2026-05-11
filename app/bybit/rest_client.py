@@ -1,5 +1,5 @@
 """
-Bybit REST Client — Stage 2
+Bybit REST Client — Stage 2 + Stage 4
 
 Async обёртка над pybit (синхронным SDK Bybit).
 
@@ -20,11 +20,15 @@ Async обёртка над pybit (синхронным SDK Bybit).
 - get_server_time()            — для проверки связи + расчёта drift
 - health_check()               — для /health/ready
 
-Stage 3+ добавит:
-- set_leverage(), set_position_mode()
+Stage 4 добавил:
+- set_leverage(symbol, leverage)               — установить плечо для символа
+- place_market_order(..., stop_loss, take_profit) — атомарное открытие со стопами
+- get_order_by_id(symbol, order_id)            — статус ордера по ID
+
+Stage 5+ добавит:
+- set_position_mode()
 - get_kline() / get_recent_trades()
 - get_closed_pnl(), get_fee_rate()
-- условные ордера (TP/SL, Stop)
 """
 
 from __future__ import annotations
@@ -364,9 +368,133 @@ class BybitRestClient:
             raw=item,
         )
 
+    async def get_tickers(
+        self, symbol: str, category: str = "linear"
+    ) -> dict[str, Any]:
+        """
+        Получить тикеры (bid/ask/last) по символу. Используется Risk Manager
+        для расчёта spread. Возвращает сырой dict, как Bybit V5.
+
+        Формат result:
+        {"category": "linear", "list": [{"symbol": "BTCUSDT",
+          "bid1Price": "...", "ask1Price": "...", "lastPrice": "...", ...}]}
+        """
+        # обёртка для совместимости с risk_manager._spread_bps()
+        result = await self._call("get_tickers", category=category, symbol=symbol)
+        return {"result": result}
+
+    async def get_balance(self, coin: str = "USDT") -> dict[str, Any]:
+        """
+        Совместимая с risk_manager._equity() обёртка.
+        Возвращает сырой ответ Bybit V5 в формате {"result": {"list": [...]}}.
+        """
+        result = await self._call(
+            "get_wallet_balance", accountType="UNIFIED", coin=coin
+        )
+        return {"result": result}
+
+    async def get_order_by_id(
+        self,
+        symbol: str,
+        order_id: Optional[str] = None,
+        order_link_id: Optional[str] = None,
+        category: str = "linear",
+    ) -> Optional[Order]:
+        """
+        Получить ордер по orderId или orderLinkId.
+
+        Сначала ищет в активных (открытых) ордерах через get_open_orders,
+        если не нашёл — ищет в истории через get_order_history.
+        Возвращает Order или None, если ордер не найден.
+
+        Stage 4: используется Execution Engine для проверки статуса
+        после place_market_order().
+        """
+        if not order_id and not order_link_id:
+            raise ValueError("Either order_id or order_link_id required")
+
+        params: dict[str, Any] = {"category": category, "symbol": symbol}
+        if order_id:
+            params["orderId"] = order_id
+        if order_link_id:
+            params["orderLinkId"] = order_link_id
+
+        # сначала активные
+        result = await self._call("get_open_orders", **params)
+        items = result.get("list", [])
+
+        # если не нашёл — смотрим историю
+        if not items:
+            result = await self._call("get_order_history", **params)
+            items = result.get("list", [])
+
+        if not items:
+            return None
+
+        o = items[0]
+        return Order(
+            order_id=o["orderId"],
+            order_link_id=o.get("orderLinkId", ""),
+            symbol=o["symbol"],
+            side=o["side"],
+            order_type=o.get("orderType", ""),
+            qty=_dec(o.get("qty", "0")),
+            price=_dec(o.get("price", "0")),
+            status=o.get("orderStatus", ""),
+            created_time=int(o.get("createdTime", 0)),
+            raw=o,
+        )
+
     # --------------------------------------------------------
     # Публичный API: торговля (используется в Stage 4+)
     # --------------------------------------------------------
+
+    async def set_leverage(
+        self,
+        symbol: str,
+        leverage: int,
+        category: str = "linear",
+    ) -> dict[str, Any]:
+        """
+        Установить плечо для символа.
+
+        Bybit V5 требует buyLeverage и sellLeverage отдельно (для hedge mode),
+        но для one-way mode они должны быть равны.
+
+        ВАЖНО: Bybit возвращает retCode=110043 ("leverage not modified"),
+        если плечо уже установлено в это значение — это НЕ ошибка,
+        обрабатываем как успех.
+
+        Stage 4: вызывается ExecutionEngine перед каждым place_market_order.
+        """
+        if self._readonly_mode:
+            raise BybitReadOnlyError(
+                "Write operation 'set_leverage' blocked: BYBIT_READONLY_MODE is enabled"
+            )
+
+        params: dict[str, Any] = {
+            "category": category,
+            "symbol": symbol,
+            "buyLeverage": str(leverage),
+            "sellLeverage": str(leverage),
+        }
+
+        logger.info(
+            "Setting leverage",
+            extra={"symbol": symbol, "leverage": leverage},
+        )
+
+        try:
+            return await self._call("set_leverage", **params)
+        except BybitAPIError as e:
+            # 110043 = leverage not modified — это норма
+            if getattr(e, "code", None) == 110043:
+                logger.debug(
+                    "Leverage unchanged",
+                    extra={"symbol": symbol, "leverage": leverage},
+                )
+                return {}
+            raise
 
     async def place_market_order(
         self,
@@ -377,12 +505,21 @@ class BybitRestClient:
         reduce_only: bool = False,
         order_link_id: Optional[str] = None,
         position_idx: int = 0,              # 0 = One-Way mode
+        stop_loss: Optional[Decimal] = None,
+        take_profit: Optional[Decimal] = None,
+        tpsl_mode: str = "Full",
     ) -> dict[str, Any]:
         """
         Рыночный ордер.
 
-        ⚠️ Stage 2 ТОЛЬКО реализует метод. Реальное использование — Stage 4
-        после внедрения Risk Manager.
+        Stage 4: добавлены параметры stop_loss и take_profit для атомарной
+        установки стопов прямо при открытии позиции. Bybit V5 нативно
+        поддерживает это через place_order — отдельный запрос не нужен.
+
+        - stop_loss: цена SL (None = не устанавливать)
+        - take_profit: цена TP (None = не устанавливать)
+        - tpsl_mode: "Full" = SL/TP закроют всю позицию,
+                     "Partial" = можно частичное закрытие
         """
 
         if self._readonly_mode:
@@ -403,11 +540,21 @@ class BybitRestClient:
         if order_link_id:
             params["orderLinkId"] = order_link_id
 
+        # SL/TP параметры — Bybit V5 поддерживает их прямо в place_order
+        if stop_loss is not None:
+            params["stopLoss"] = str(stop_loss)
+            params["tpslMode"] = tpsl_mode
+        if take_profit is not None:
+            params["takeProfit"] = str(take_profit)
+            params["tpslMode"] = tpsl_mode
+
         logger.info(
             "Placing market order",
             extra={
                 "symbol": symbol, "side": side, "qty": str(qty),
                 "reduce_only": reduce_only, "link_id": order_link_id,
+                "sl": str(stop_loss) if stop_loss else None,
+                "tp": str(take_profit) if take_profit else None,
             },
         )
         return await self._call("place_order", **params)
@@ -465,6 +612,23 @@ class BybitRestClient:
             return False
 
         return True
+
+
+# ============================================================
+# Singleton instance (для совместимости с risk_manager.py)
+# ============================================================
+# risk_manager.py делает: from app.bybit.rest_client import bybit_rest
+# Используется ленивая инициализация: создаётся при первом импорте,
+# но только если API-ключи настроены.
+
+try:
+    bybit_rest: Optional[BybitRestClient] = BybitRestClient.from_settings()
+except (BybitAuthError, Exception) as _e:  # noqa: BLE001
+    logger.warning(
+        "bybit_rest singleton not initialized: %s — risk_manager will get None",
+        _e,
+    )
+    bybit_rest = None
 
 
 # ============================================================
