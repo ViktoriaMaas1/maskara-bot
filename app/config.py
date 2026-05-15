@@ -129,6 +129,18 @@ class Settings(BaseSettings):
     execution_max_retries: int = Field(default=3, ge=0, le=10)
     execution_retry_delay_sec: float = Field(default=1.0, ge=0.1, le=10.0)
 
+    # =========================================================
+    # WEBSOCKET (Stage 5)
+    # =========================================================
+    bybit_ws_enabled: bool = Field(default=True)
+    bybit_ws_url_testnet: str = Field(default="wss://stream-testnet.bybit.com/v5/public/linear")
+    bybit_ws_url_mainnet: str = Field(default="wss://stream.bybit.com/v5/public/linear")
+    bybit_ws_orderbook_depth: int = Field(default=50, ge=1, le=500)
+    bybit_ws_kline_intervals: str = Field(default="1,3,15,60")
+    bybit_ws_reconnect_max_delay_sec: float = Field(default=60.0, ge=1.0, le=300.0)
+    bybit_ws_reconnect_base_delay_sec: float = Field(default=1.0, ge=0.1, le=10.0)
+    bybit_ws_ping_interval_sec: int = Field(default=20, ge=5, le=60)
+
     # EXTERNAL DATA (Stage 9)
     # =========================================================
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))
