@@ -141,6 +141,19 @@ class Settings(BaseSettings):
     bybit_ws_reconnect_base_delay_sec: float = Field(default=1.0, ge=0.1, le=10.0)
     bybit_ws_ping_interval_sec: int = Field(default=20, ge=5, le=60)
 
+    # =========================================================
+    # MARKET CACHE (Stage 6)
+    # =========================================================
+    market_cache_enabled: bool = Field(default=True)
+    market_cache_orderbook_ttl_sec: int = Field(default=60, ge=1, le=3600)
+    market_cache_ticker_ttl_sec: int = Field(default=30, ge=1, le=3600)
+    market_cache_trades_ttl_sec: int = Field(default=3600, ge=60, le=86400)
+    market_cache_klines_ttl_sec: int = Field(default=86400, ge=300, le=604800)
+    market_cache_liquidations_ttl_sec: int = Field(default=3600, ge=60, le=86400)
+    market_cache_max_trades: int = Field(default=500, ge=10, le=10000)
+    market_cache_max_klines: int = Field(default=200, ge=10, le=1000)
+    market_cache_max_liquidations: int = Field(default=100, ge=10, le=1000)
+
     # EXTERNAL DATA (Stage 9)
     # =========================================================
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))
