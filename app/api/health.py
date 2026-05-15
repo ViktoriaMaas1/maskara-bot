@@ -3,6 +3,7 @@ Healthcheck endpoint.
 
 GET /health — общий статус (для мониторинга / load balancer)
 GET /health/ready — проверяет ВСЕ зависимости (для Kubernetes readiness probe)
+GET /health/websocket — состояние Bybit WebSocket клиента (Stage 5)
 
 Стандарт:
 - 200 = всё ОК
@@ -12,6 +13,7 @@ GET /health/ready — проверяет ВСЕ зависимости (для K
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -93,3 +95,70 @@ async def readiness(settings: SettingsDep) -> JSONResponse:
         status_code=status.HTTP_200_OK if all_ok else status.HTTP_503_SERVICE_UNAVAILABLE,
         content=payload.model_dump(),
     )
+
+
+@router.get("/health/websocket", summary="WebSocket health")
+async def websocket_health(settings: SettingsDep) -> JSONResponse:
+    """
+    Состояние Bybit WebSocket клиента (Stage 5).
+
+    Возвращает:
+    - status: "disabled" | "healthy" | "degraded" | "unhealthy"
+    - connected: соединение с Bybit активно
+    - last_message_ts: unix timestamp последнего сообщения (0 если нет данных)
+    - seconds_since_last_message: сколько секунд назад пришло последнее сообщение
+    - symbols: на какие символы подписаны
+    - failed_attempts: счётчик неудачных попыток подключения
+
+    HTTP коды:
+    - 200 = healthy ИЛИ disabled (фичефлаг выключен)
+    - 503 = unhealthy / degraded / not_initialized
+    """
+    # Фичефлаг — WebSocket вообще выключен
+    if not settings.bybit_ws_enabled:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "disabled"},
+        )
+
+    try:
+        from app.bybit.websocket_client import get_websocket, WebSocketNotInitialized
+        try:
+            ws = get_websocket()
+        except WebSocketNotInitialized:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "reason": "not_initialized"},
+            )
+
+        healthy = ws.is_healthy()
+        last_ts = ws.last_message_ts
+        since = (time.time() - last_ts) if last_ts > 0 else None
+
+        if not ws.connected:
+            ws_status = "unhealthy"
+            http_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        elif healthy:
+            ws_status = "healthy"
+            http_code = status.HTTP_200_OK
+        else:
+            ws_status = "degraded"
+            http_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+        return JSONResponse(
+            status_code=http_code,
+            content={
+                "status": ws_status,
+                "connected": ws.connected,
+                "last_message_ts": last_ts,
+                "seconds_since_last_message": since,
+                "symbols": settings.allowed_symbols_list,
+                "failed_attempts": ws._failed_attempts,
+            },
+        )
+    except Exception as e:
+        logger.exception("WebSocket healthcheck failed")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": str(e)},
+        )

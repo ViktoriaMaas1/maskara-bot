@@ -31,6 +31,7 @@ from app.config import get_settings
 from app.database.db import close_db, init_db
 from app.utils.logging_config import setup_logging
 from app.utils.redis_client import close_redis, init_redis
+from app.bybit.websocket_client import close_websocket, init_websocket
 
 # КРИТИЧНО: настраиваем логирование ДО любых других импортов / создания app.
 # Иначе ранние сообщения уйдут в дефолтный stderr без формата.
@@ -74,10 +75,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # ---------- Подключаем зависимости ----------
     await init_redis()
     await init_db()
+    await init_websocket()
 
     yield  # ← здесь приложение работает
 
     # ---------- Корректно отключаемся ----------
+    await close_websocket()
     await close_db()
     await close_redis()
 
