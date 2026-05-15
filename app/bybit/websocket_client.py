@@ -1,34 +1,31 @@
 """
-Bybit WebSocket Data Collector — Stage 5.
+Bybit WebSocket Data Collector — Stage 5+6.
 
 Подключается к публичным потокам Bybit V5 (linear):
 - orderbook (depth N)
 - publicTrade
 - tickers
 - kline (timeframes 1/3/15/60)
-- liquidation
+- liquidation (all_liquidation_stream API)
 
 Архитектура:
 - pybit.unified_trading.WebSocket работает СИНХРОННО через callbacks
-- Мы оборачиваем его, накапливаем последние снимки в self._latest
+- Мы оборачиваем его, накапливаем последние снимки в self._latest (fallback)
+- ДОПОЛНИТЕЛЬНО (Stage 6): callbacks планируют запись в MarketCache (Redis)
+  через asyncio.run_coroutine_threadsafe — мост из pybit thread в event loop
 - Главный цикл живёт в фоновой asyncio.Task, перезапускается на разрывах
 - Singleton bybit_ws + init_websocket() / close_websocket() (паттерн как redis_client.py)
 
-Что хранится в памяти (Stage 5, in-memory; Stage 6 переедет в Redis):
+In-memory storage (fallback на случай если Redis отвалился):
 - self._latest["orderbook"][symbol] = {"b": [...], "a": [...], "ts": ...}
-- self._latest["trade"][symbol]     = [{...}, ...] (последние N сделок)
+- self._latest["trade"][symbol]     = deque[{...}]
 - self._latest["ticker"][symbol]    = {...}
-- self._latest["kline"][symbol][interval] = [{...}, ...] (последние N свечей)
-- self._latest["liquidation"][symbol] = [{...}, ...] (последние N ликвидаций)
+- self._latest["kline"][symbol][interval] = deque[{...}]
+- self._latest["liquidation"][symbol] = deque[{...}]
 
 Health:
 - is_healthy() → True если соединение живо и приходят сообщения
 - last_message_ts — для health endpoint /health/websocket
-
-TODO (Stage 6+):
-- Перенести storage в Redis с TTL
-- Добавить in-memory ring-buffer для history (для Order Flow Engine Stage 8)
-- Приватные потоки (order/position/wallet) — Stage 11
 """
 from __future__ import annotations
 
@@ -61,8 +58,7 @@ class WebSocketNotInitialized(BybitWebSocketError):
 # Константы
 # ============================================================
 
-# Сколько последних элементов хранить в памяти на символ.
-# Stage 5 — минимум для health-checks; полная история придёт со Stage 6 (Market Cache в Redis).
+# Сколько последних элементов хранить в памяти на символ (fallback).
 _MAX_TRADES_PER_SYMBOL = 100
 _MAX_KLINES_PER_TF = 50
 _MAX_LIQUIDATIONS_PER_SYMBOL = 50
@@ -82,13 +78,8 @@ class BybitWebSocketClient:
     """
     Async обёртка над синхронным pybit.unified_trading.WebSocket.
 
-    Использование:
-        client = BybitWebSocketClient.from_settings(symbols=["BTCUSDT", "ETHUSDT"])
-        await client.start()
-        ...
-        snap = client.get_latest("orderbook", "BTCUSDT")
-        ...
-        await client.stop()
+    Stage 5: in-memory storage в self._latest.
+    Stage 6: дополнительно пишет в Redis через MarketCache (если включён).
     """
 
     def __init__(
@@ -101,6 +92,7 @@ class BybitWebSocketClient:
         reconnect_base_delay_sec: float = 1.0,
         reconnect_max_delay_sec: float = 60.0,
         ping_interval_sec: int = 20,
+        cache_enabled: bool = False,
     ) -> None:
         if not symbols:
             raise ValueError("At least one symbol required")
@@ -112,29 +104,35 @@ class BybitWebSocketClient:
         self._reconnect_base_delay = reconnect_base_delay_sec
         self._reconnect_max_delay = reconnect_max_delay_sec
         self._ping_interval = ping_interval_sec
+        self._cache_enabled = cache_enabled
 
-        # Хранилище последних снимков (in-memory, Stage 6 переедет в Redis)
+        # In-memory storage (fallback)
         self._latest: dict[str, Any] = {
-            "orderbook": {},     # {symbol: {"b": [...], "a": [...], "ts": ms}}
-            "trade": {},         # {symbol: deque[{...}]}
-            "ticker": {},        # {symbol: {...}}
-            "kline": {},         # {symbol: {interval: deque[{...}]}}
-            "liquidation": {},   # {symbol: deque[{...}]}
+            "orderbook": {},
+            "trade": {},
+            "ticker": {},
+            "kline": {},
+            "liquidation": {},
         }
 
         # Состояние подключения
-        self._ws: Optional[Any] = None              # pybit WebSocket instance
-        self._task: Optional[asyncio.Task] = None   # фоновая задача supervisor
+        self._ws: Optional[Any] = None
+        self._task: Optional[asyncio.Task] = None
         self._stop_flag = asyncio.Event()
         self._connected = False
         self._last_message_ts: float = 0.0
         self._failed_attempts = 0
         self._alert_sent = False
 
+        # Stage 6: event loop для моста из pybit thread → asyncio
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
         env = "testnet" if testnet else "MAINNET"
         logger.info(
-            "Bybit WebSocket client initialized: env=%s symbols=%s depth=%d intervals=%s",
+            "Bybit WebSocket client initialized: env=%s symbols=%s depth=%d "
+            "intervals=%s cache_enabled=%s",
             env, self._symbols, orderbook_depth, self._kline_intervals,
+            cache_enabled,
         )
 
     # --------------------------------------------------------
@@ -153,6 +151,7 @@ class BybitWebSocketClient:
             reconnect_base_delay_sec=s.bybit_ws_reconnect_base_delay_sec,
             reconnect_max_delay_sec=s.bybit_ws_reconnect_max_delay_sec,
             ping_interval_sec=s.bybit_ws_ping_interval_sec,
+            cache_enabled=s.market_cache_enabled,
         )
 
     # --------------------------------------------------------
@@ -164,6 +163,8 @@ class BybitWebSocketClient:
         if self._task is not None and not self._task.done():
             logger.warning("WebSocket client already running")
             return
+        # Stage 6: запоминаем event loop для моста из pybit thread
+        self._loop = asyncio.get_running_loop()
         self._stop_flag.clear()
         self._task = asyncio.create_task(self._supervisor_loop())
         logger.info("WebSocket supervisor task started")
@@ -173,7 +174,6 @@ class BybitWebSocketClient:
         self._stop_flag.set()
         if self._ws is not None:
             try:
-                # pybit WebSocket.exit() — синхронный
                 await asyncio.to_thread(self._safe_exit_ws)
             except Exception as e:
                 logger.warning("Error closing WebSocket: %s", e)
@@ -185,6 +185,7 @@ class BybitWebSocketClient:
                 self._task.cancel()
             self._task = None
         self._connected = False
+        self._loop = None
         logger.info("WebSocket client stopped")
 
     def is_healthy(self) -> bool:
@@ -196,7 +197,6 @@ class BybitWebSocketClient:
         if not self._connected:
             return False
         if self._last_message_ts == 0:
-            # ещё ничего не приходило — даём шанс на старте
             return True
         return (time.time() - self._last_message_ts) < _HEARTBEAT_TIMEOUT_SEC
 
@@ -209,14 +209,7 @@ class BybitWebSocketClient:
         return self._connected
 
     def get_latest(self, stream: str, symbol: str, interval: Optional[int] = None) -> Any:
-        """
-        Получить последний снимок для stream/symbol.
-
-        stream: "orderbook" | "trade" | "ticker" | "kline" | "liquidation"
-        interval: для kline (1/3/15/60), для остальных игнорируется
-
-        Returns: dict / list / None если данных ещё нет
-        """
+        """Получить последний снимок из in-memory storage (fallback)."""
         symbol = symbol.upper()
         if stream == "kline":
             tf_map = self._latest["kline"].get(symbol, {})
@@ -232,6 +225,51 @@ class BybitWebSocketClient:
         return value
 
     # --------------------------------------------------------
+    # Stage 6: мост из pybit thread → asyncio event loop
+    # --------------------------------------------------------
+
+    def _schedule_to_cache(self, coro) -> None:
+        """
+        Безопасно отправить корутину в event loop из синхронного потока.
+
+        Вызывается из pybit callbacks (синхронные). Внутри pybit-потока нет
+        event loop, поэтому используем run_coroutine_threadsafe.
+
+        Если кеш выключен или loop недоступен — корутину закрываем (чтобы не было warning).
+        """
+        if not self._cache_enabled or self._loop is None or self._loop.is_closed():
+            # Закрываем корутину, чтобы не получить RuntimeWarning: coroutine was never awaited
+            coro.close()
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
+        except RuntimeError:
+            # Loop уже закрылся между проверкой и вызовом — закрываем корутину
+            coro.close()
+        except Exception:
+            logger.exception("Failed to schedule coroutine to cache loop")
+            try:
+                coro.close()
+            except Exception:
+                pass
+
+    def _get_cache(self):
+        """
+        Лениво получить MarketCache singleton.
+        Возвращает None если кеш ещё не инициализирован (на старте между
+        init_websocket и init_market_cache есть короткое окно).
+        """
+        try:
+            from app.cache.market_cache import get_market_cache, MarketCacheNotInitialized
+            try:
+                return get_market_cache()
+            except MarketCacheNotInitialized:
+                return None
+        except Exception:
+            logger.exception("Failed to import MarketCache")
+            return None
+
+    # --------------------------------------------------------
     # Supervisor loop — auto-reconnect с exponential backoff
     # --------------------------------------------------------
 
@@ -241,7 +279,6 @@ class BybitWebSocketClient:
         while not self._stop_flag.is_set():
             try:
                 await asyncio.to_thread(self._connect_and_subscribe)
-                # успешное подключение — сбрасываем backoff
                 delay = self._reconnect_base_delay
                 self._failed_attempts = 0
                 if self._alert_sent:
@@ -249,7 +286,6 @@ class BybitWebSocketClient:
                     self._alert_sent = False
                 self._connected = True
 
-                # ждём пока соединение живо ИЛИ stop_flag
                 while not self._stop_flag.is_set():
                     await asyncio.sleep(1.0)
                     if not self._is_ws_alive():
@@ -264,7 +300,6 @@ class BybitWebSocketClient:
                         )
                         break
 
-                # вышли из внутреннего цикла — закрываем ws перед reconnect
                 self._connected = False
                 try:
                     await asyncio.to_thread(self._safe_exit_ws)
@@ -282,7 +317,6 @@ class BybitWebSocketClient:
                     self._failed_attempts, e,
                 )
 
-                # Telegram alert при затяжной недоступности
                 if (
                     self._failed_attempts >= _ALERT_AFTER_FAILED_ATTEMPTS
                     and not self._alert_sent
@@ -293,11 +327,9 @@ class BybitWebSocketClient:
             if self._stop_flag.is_set():
                 break
 
-            # экспоненциальный backoff с потолком
             logger.info("Reconnecting in %.1fs", delay)
             try:
                 await asyncio.wait_for(self._stop_flag.wait(), timeout=delay)
-                # дождались stop_flag — выходим
                 break
             except asyncio.TimeoutError:
                 pass
@@ -311,10 +343,6 @@ class BybitWebSocketClient:
     # --------------------------------------------------------
 
     def _connect_and_subscribe(self) -> None:
-        """
-        Создаёт pybit WebSocket и подписывается на все потоки.
-        Вызывается через asyncio.to_thread (pybit синхронный).
-        """
         from pybit.unified_trading import WebSocket
 
         self._ws = WebSocket(
@@ -324,32 +352,27 @@ class BybitWebSocketClient:
             ping_timeout=10,
         )
 
-        # Подписки. pybit принимает callback на каждый поток.
         for symbol in self._symbols:
-            # orderbook
             self._ws.orderbook_stream(
                 depth=self._orderbook_depth,
                 symbol=symbol,
                 callback=self._on_orderbook,
             )
-            # publicTrade
             self._ws.trade_stream(
                 symbol=symbol,
                 callback=self._on_trade,
             )
-            # tickers
             self._ws.ticker_stream(
                 symbol=symbol,
                 callback=self._on_ticker,
             )
-            # klines — отдельная подписка на каждый таймфрейм
             for interval in self._kline_intervals:
                 self._ws.kline_stream(
                     interval=str(interval),
                     symbol=symbol,
                     callback=self._on_kline,
                 )
-            # liquidations
+            # Stage 5+: используем all_liquidation_stream (старый liquidation_stream deprecated)
             self._ws.all_liquidation_stream(
                 symbol=symbol,
                 callback=self._on_liquidation,
@@ -361,17 +384,14 @@ class BybitWebSocketClient:
         )
 
     def _is_ws_alive(self) -> bool:
-        """Проверка живости pybit WebSocket."""
         if self._ws is None:
             return False
         try:
-            # pybit имеет is_connected() метод
             return bool(self._ws.is_connected())
         except Exception:
             return False
 
     def _safe_exit_ws(self) -> None:
-        """Безопасно закрыть pybit WebSocket."""
         if self._ws is None:
             return
         try:
@@ -383,6 +403,7 @@ class BybitWebSocketClient:
 
     # --------------------------------------------------------
     # Callbacks от pybit (вызываются в потоке pybit, НЕ в event loop)
+    # Stage 6: дополнительно планируем запись в MarketCache
     # --------------------------------------------------------
 
     def _on_orderbook(self, msg: dict[str, Any]) -> None:
@@ -391,14 +412,21 @@ class BybitWebSocketClient:
             symbol = data.get("s") or msg.get("topic", "").split(".")[-1]
             if not symbol:
                 return
-            self._latest["orderbook"][symbol] = {
-                "b": data.get("b", []),          # [[price, qty], ...]
+            snapshot = {
+                "b": data.get("b", []),
                 "a": data.get("a", []),
                 "ts": msg.get("ts", 0),
-                "u": data.get("u", 0),           # update id
+                "u": data.get("u", 0),
                 "seq": data.get("seq", 0),
             }
+            # In-memory fallback
+            self._latest["orderbook"][symbol] = snapshot
             self._last_message_ts = time.time()
+
+            # Stage 6: пишем в Redis
+            cache = self._get_cache()
+            if cache is not None:
+                self._schedule_to_cache(cache.update_orderbook(symbol, snapshot))
         except Exception:
             logger.exception("Error processing orderbook message")
 
@@ -407,21 +435,26 @@ class BybitWebSocketClient:
             trades = msg.get("data") or []
             if not trades:
                 return
-            # data — список сделок
+            cache = self._get_cache()
             for t in trades:
                 symbol = t.get("s")
                 if not symbol:
                     continue
-                buf = self._latest["trade"].setdefault(
-                    symbol, deque(maxlen=_MAX_TRADES_PER_SYMBOL)
-                )
-                buf.append({
-                    "ts": t.get("T", 0),         # exec time ms
-                    "side": t.get("S", ""),      # "Buy" / "Sell"
+                trade_dict = {
+                    "ts": t.get("T", 0),
+                    "side": t.get("S", ""),
                     "price": t.get("p", "0"),
                     "qty": t.get("v", "0"),
                     "tradeId": t.get("i", ""),
-                })
+                }
+                # In-memory fallback
+                buf = self._latest["trade"].setdefault(
+                    symbol, deque(maxlen=_MAX_TRADES_PER_SYMBOL)
+                )
+                buf.append(trade_dict)
+                # Stage 6: пишем в Redis
+                if cache is not None:
+                    self._schedule_to_cache(cache.add_trade(symbol, trade_dict))
             self._last_message_ts = time.time()
         except Exception:
             logger.exception("Error processing trade message")
@@ -432,7 +465,7 @@ class BybitWebSocketClient:
             symbol = data.get("symbol")
             if not symbol:
                 return
-            self._latest["ticker"][symbol] = {
+            snapshot = {
                 "lastPrice": data.get("lastPrice", "0"),
                 "markPrice": data.get("markPrice", "0"),
                 "indexPrice": data.get("indexPrice", "0"),
@@ -444,7 +477,13 @@ class BybitWebSocketClient:
                 "fundingRate": data.get("fundingRate", "0"),
                 "ts": msg.get("ts", 0),
             }
+            # In-memory fallback
+            self._latest["ticker"][symbol] = snapshot
             self._last_message_ts = time.time()
+            # Stage 6: пишем в Redis
+            cache = self._get_cache()
+            if cache is not None:
+                self._schedule_to_cache(cache.update_ticker(symbol, snapshot))
         except Exception:
             logger.exception("Error processing ticker message")
 
@@ -452,17 +491,17 @@ class BybitWebSocketClient:
         try:
             klines = msg.get("data") or []
             topic = msg.get("topic", "")
-            # topic = "kline.1.BTCUSDT"
             parts = topic.split(".")
             if len(parts) < 3:
                 return
             interval = int(parts[1])
             symbol = parts[2]
+            cache = self._get_cache()
             tf_buf = self._latest["kline"].setdefault(symbol, {}).setdefault(
                 interval, deque(maxlen=_MAX_KLINES_PER_TF)
             )
             for k in klines:
-                tf_buf.append({
+                kline_dict = {
                     "start": k.get("start", 0),
                     "end": k.get("end", 0),
                     "interval": k.get("interval", str(interval)),
@@ -473,7 +512,12 @@ class BybitWebSocketClient:
                     "volume": k.get("volume", "0"),
                     "turnover": k.get("turnover", "0"),
                     "confirm": k.get("confirm", False),
-                })
+                }
+                # In-memory fallback
+                tf_buf.append(kline_dict)
+                # Stage 6: пишем в Redis
+                if cache is not None:
+                    self._schedule_to_cache(cache.add_kline(symbol, interval, kline_dict))
             self._last_message_ts = time.time()
         except Exception:
             logger.exception("Error processing kline message")
@@ -483,21 +527,26 @@ class BybitWebSocketClient:
             data = msg.get("data")
             if not data:
                 return
-            # liquidation может приходить как dict ИЛИ как list (зависит от endpoint)
             items = data if isinstance(data, list) else [data]
+            cache = self._get_cache()
             for item in items:
                 symbol = item.get("symbol") or item.get("s")
                 if not symbol:
                     continue
-                buf = self._latest["liquidation"].setdefault(
-                    symbol, deque(maxlen=_MAX_LIQUIDATIONS_PER_SYMBOL)
-                )
-                buf.append({
+                liq_dict = {
                     "ts": item.get("updatedTime") or item.get("T", 0),
                     "side": item.get("side", ""),
                     "price": item.get("price", "0"),
                     "qty": item.get("size") or item.get("v", "0"),
-                })
+                }
+                # In-memory fallback
+                buf = self._latest["liquidation"].setdefault(
+                    symbol, deque(maxlen=_MAX_LIQUIDATIONS_PER_SYMBOL)
+                )
+                buf.append(liq_dict)
+                # Stage 6: пишем в Redis
+                if cache is not None:
+                    self._schedule_to_cache(cache.add_liquidation(symbol, liq_dict))
             self._last_message_ts = time.time()
         except Exception:
             logger.exception("Error processing liquidation message")
@@ -534,9 +583,7 @@ async def init_websocket() -> Optional[BybitWebSocketClient]:
     Создаёт singleton и запускает supervisor.
 
     Вызывается из main.py:lifespan() при старте приложения.
-    Если bybit_ws_enabled = False — возвращает None (для тестов/dev).
-    Если запуск падает — поднимает исключение (приложение упадёт на старте,
-    что лучше чем работать частично).
+    Если bybit_ws_enabled = False — возвращает None.
     """
     global _ws_client
 

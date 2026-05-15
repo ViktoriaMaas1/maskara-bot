@@ -4,6 +4,7 @@ Healthcheck endpoint.
 GET /health — общий статус (для мониторинга / load balancer)
 GET /health/ready — проверяет ВСЕ зависимости (для Kubernetes readiness probe)
 GET /health/websocket — состояние Bybit WebSocket клиента (Stage 5)
+GET /health/cache — состояние Real-Time Market Cache (Stage 6)
 
 Стандарт:
 - 200 = всё ОК
@@ -158,6 +159,78 @@ async def websocket_health(settings: SettingsDep) -> JSONResponse:
         )
     except Exception as e:
         logger.exception("WebSocket healthcheck failed")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "unhealthy", "error": str(e)},
+        )
+
+
+@router.get("/health/cache", summary="Market Cache health")
+async def cache_health(settings: SettingsDep) -> JSONResponse:
+    """
+    Состояние Real-Time Market Cache (Stage 6).
+
+    Возвращает:
+    - status: "disabled" | "healthy" | "unhealthy"
+    - redis_ping: Redis отвечает на ping
+    - stats: количество ключей по типам (orderbook/ticker/trades/klines/liquidations)
+    - ttls: настройки TTL для каждого типа
+
+    HTTP коды:
+    - 200 = healthy ИЛИ disabled
+    - 503 = unhealthy / not_initialized / redis_down
+    """
+    # Фичефлаг — кеш вообще выключен
+    if not settings.market_cache_enabled:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "disabled"},
+        )
+
+    try:
+        from app.cache.market_cache import (
+            get_market_cache,
+            MarketCacheNotInitialized,
+        )
+        try:
+            cache = get_market_cache()
+        except MarketCacheNotInitialized:
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"status": "unhealthy", "reason": "not_initialized"},
+            )
+
+        # Redis ping
+        redis_ok = await cache.is_healthy()
+
+        # Stats — сколько ключей по каждому типу
+        stats = await cache.get_stats()
+
+        # TTL настройки — для информации
+        ttls = {
+            "orderbook": settings.market_cache_orderbook_ttl_sec,
+            "ticker": settings.market_cache_ticker_ttl_sec,
+            "trades": settings.market_cache_trades_ttl_sec,
+            "klines": settings.market_cache_klines_ttl_sec,
+            "liquidations": settings.market_cache_liquidations_ttl_sec,
+        }
+
+        cache_status = "healthy" if redis_ok else "unhealthy"
+        http_code = (
+            status.HTTP_200_OK if redis_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+        return JSONResponse(
+            status_code=http_code,
+            content={
+                "status": cache_status,
+                "redis_ping": redis_ok,
+                "stats": stats,
+                "ttls": ttls,
+            },
+        )
+    except Exception as e:
+        logger.exception("Cache healthcheck failed")
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={"status": "unhealthy", "error": str(e)},

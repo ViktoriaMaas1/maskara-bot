@@ -44,7 +44,7 @@ async def init_redis() -> aioredis.Redis:
         encoding="utf-8",
         decode_responses=True,
         # Пул соединений — несколько одновременных запросов не блокируют друг друга
-        max_connections=20,
+        max_connections=500,
         # Таймауты — не зависаем если Redis тормозит
         socket_connect_timeout=5,
         socket_timeout=5,
