@@ -26,13 +26,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.api import health, webhook
+from app.api import health, order_flow, webhook
 from app.config import get_settings
 from app.database.db import close_db, init_db
 from app.utils.logging_config import setup_logging
 from app.utils.redis_client import close_redis, init_redis
 from app.bybit.websocket_client import close_websocket, init_websocket
 from app.cache.market_cache import close_market_cache, init_market_cache
+from app.cache.market_cache import get_market_cache
+from app.engines.order_flow.engine import close_order_flow_engine, init_order_flow_engine
 
 # КРИТИЧНО: настраиваем логирование ДО любых других импортов / создания app.
 # Иначе ранние сообщения уйдут в дефолтный stderr без формата.
@@ -78,10 +80,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     await init_websocket()
     await init_market_cache()
+    init_order_flow_engine(get_market_cache())
 
     yield  # ← здесь приложение работает
 
     # ---------- Корректно отключаемся ----------
+    close_order_flow_engine()
     await close_market_cache()
     await close_websocket()
     await close_db()
@@ -113,6 +117,7 @@ def create_app() -> FastAPI:
     # ---------- Роутеры ----------
     app.include_router(health.router)
     app.include_router(webhook.router)
+    app.include_router(order_flow.router)
 
     # ---------- Обработчик ошибок валидации ----------
     @app.exception_handler(RequestValidationError)
