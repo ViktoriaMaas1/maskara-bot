@@ -159,6 +159,23 @@ class Settings(BaseSettings):
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))
     news_api_key: SecretStr = Field(default=SecretStr(""))
 
+    # =====================================================
+    # SIGNALS (Stage 8)
+    # =====================================================
+    signal_polling_interval_sec: int = Field(default=5, ge=1, le=60)
+    signal_symbols: str = Field(default="BTCUSDT")
+    signal_cooldown_sec: int = Field(default=60, ge=1, le=3600)
+    signal_retention_days: int = Field(default=30, ge=1, le=365)
+
+    # Пороги правил
+    signal_obi_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    signal_aggression_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    signal_cvd_min_abs_value: float = Field(default=1.0, gt=0)
+    signal_large_trade_min_count: int = Field(default=5, ge=1, le=100)
+    signal_tfi_large_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    signal_tfi_5m_exhaustion: float = Field(default=0.6, ge=0.0, le=1.0)
+    signal_tfi_30s_reversal: float = Field(default=0.3, ge=0.0, le=1.0)
+
     # ---------------------------------------------------------
     # Валидаторы
     # ---------------------------------------------------------
@@ -203,6 +220,11 @@ class Settings(BaseSettings):
     def allowed_symbols_list(self) -> List[str]:
         """Парсит ALLOWED_SYMBOLS=BTCUSDT,ETHUSDT в список."""
         return [s.strip().upper() for s in self.allowed_symbols.split(",") if s.strip()]
+
+    @property
+    def signal_symbols_list(self) -> List[str]:
+        """Парсит SIGNAL_SYMBOLS=BTCUSDT,ETHUSDT в список."""
+        return [s.strip().upper() for s in self.signal_symbols.split(",") if s.strip()]
 
     @property
     def postgres_dsn(self) -> str:

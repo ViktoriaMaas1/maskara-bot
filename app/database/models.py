@@ -342,3 +342,40 @@ class StrategyVersion(Base):
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+# ============================================================
+# Signal — Stage 8 (Signal Generator)
+# ============================================================
+
+class SignalRow(Base):
+    """Сгенерированный торговый сигнал из Signal Generator (Stage 8).
+
+    Хранит каждый сигнал, выданный SignalGenerator на основе OrderFlowSnapshot
+    и набора правил. Используется для аудита, отладки и Self-Learning AI.
+
+    Retention: 30 дней (см. SIGNAL_RETENTION_DAYS в .env).
+    """
+
+    __tablename__ = "signals"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    # Символ и время генерации
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger)
+
+    # Сигнал
+    action: Mapped[str] = mapped_column(String(8), index=True)  # BUY / SELL
+    strength: Mapped[str] = mapped_column(String(8))  # WEAK / MEDIUM / STRONG
+    score: Mapped[float] = mapped_column(Numeric(5, 4))  # 0.0000 .. 1.0000
+
+    # Сработавшие правила (JSON-массив имён) и snapshot OrderFlow для аудита
+    reasons: Mapped[list] = mapped_column(JSONB, default=list)
+    snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # Опциональный комментарий
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
