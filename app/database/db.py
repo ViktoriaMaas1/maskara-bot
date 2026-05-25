@@ -99,6 +99,13 @@ async def init_db() -> AsyncEngine:
         "PostgreSQL подключён",
         extra={"host": settings.postgres_host, "db": settings.postgres_db},
     )
+    # Создать все таблицы из Base.metadata, если их нет.
+    # Идемпотентно: существующие не трогает.
+    from app.database import models  # noqa: F401 — регистрация моделей в Base.metadata
+    async with _engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Таблицы Base.metadata синхронизированы")
+
     return _engine
 
 
