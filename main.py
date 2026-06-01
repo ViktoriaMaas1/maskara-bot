@@ -43,6 +43,7 @@ from app.workers.signal_worker import close_signal_worker, init_signal_worker
 from app.database.db import get_sessionmaker
 from app.utils.redis_client import get_redis
 from app.api import signals as signals_api
+from app.api import dashboard as dashboard_api
 
 # КРИТИЧНО: настраиваем логирование ДО любых других импортов / создания app.
 # Иначе ранние сообщения уйдут в дефолтный stderr без формата.
@@ -144,6 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook.router)
     app.include_router(order_flow.router)
     app.include_router(signals_api.router)
+    app.include_router(dashboard_api.router)
 
     # ---------- Обработчик ошибок валидации ----------
     @app.exception_handler(RequestValidationError)

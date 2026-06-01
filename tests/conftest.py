@@ -77,7 +77,15 @@ class FakeRedis:
         if not self._is_alive(key):
             return None
         return self.kv[key][0]
-
+    async def ttl(self, key):
+        # redis-py: -2 если ключа нет, -1 если без TTL, >=0 секунды
+        if not self._is_alive(key):
+            return -2
+        _, expires_at = self.kv[key]
+        if not expires_at:
+            return -1
+        remaining = int(expires_at - time.time())
+        return remaining if remaining > 0 else -2
     def pipeline(self, transaction=True):
         return _FakePipeline(self)
 
