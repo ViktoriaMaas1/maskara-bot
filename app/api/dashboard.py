@@ -322,3 +322,30 @@ async def dashboard_page() -> HTMLResponse:
     except Exception as e:
         logger.exception("dashboard page read failed")
         return HTMLResponse(f"<h1>Dashboard unavailable</h1><p>{e}</p>", status_code=500)
+
+
+# ---- Stage 9: liquidity endpoint for dashboard ----
+from app.engines.liquidity.engine import (
+    LiquidityEngineNotInitialized as _LiqNotInit,
+    get_liquidity_engine as _get_liq_engine,
+)
+
+
+@router.get("/liquidity/{symbol}", summary="Liquidity snapshot dashboard")
+async def get_dashboard_liquidity(symbol: str) -> JSONResponse:
+    try:
+        engine = _get_liq_engine()
+    except _LiqNotInit:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"symbol": symbol.upper(), "data_available": False, "reason": "engine_not_initialized"},
+        )
+    try:
+        snapshot = await engine.get_snapshot(symbol.upper())
+        return JSONResponse(status_code=status.HTTP_200_OK, content=snapshot.model_dump())
+    except Exception as e:
+        logger.exception("/dashboard/liquidity failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
