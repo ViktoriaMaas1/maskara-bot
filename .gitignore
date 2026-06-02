@@ -73,3 +73,14 @@ logs/*
 # ============================================================
 postgres_data/
 redis_data/
+
+# debug dumps
+dashboard_dump.py
+dashboard_view.html
+engine_dump.py
+liquidity_api.py
+main_stage8.py
+main_en.py
+PROJEKT_*.txt
+PROJECT_CONTEXT.md.txt
+STAGE_DASHBOARD_PLAN.md.txt
