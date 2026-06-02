@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MASKARA Bot · Dashboard</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg2:#0f1620; --panel:#121a26; --panel2:#0d141e;
+    --border:#1e2a3a; --border2:#26384d;
+    --txt:#d7e0ea; --muted:#5f7488; --dim:#3d4f63;
+    --bull:#2ecc71; --bull-bg:rgba(46,204,113,.12);
+    --bear:#ff5364; --bear-bg:rgba(255,83,100,.12);
+    --warn:#f5a623; --accent:#39d0d8;
+    --weak:#5f7488; --medium:#f5a623; --strong:#ff5364;
+    --buy:#2ecc71; --sell:#ff5364;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:"Segoe UI",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--bg);color:var(--txt);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;font-size:14px;line-height:1.4}
+  body{
+    background-image:
+      radial-gradient(1200px 600px at 80% -10%,rgba(57,208,216,.05),transparent),
+      radial-gradient(900px 500px at -10% 110%,rgba(46,204,113,.04),transparent);
+    min-height:100vh;padding:16px;
+  }
+  .wrap{max-width:1280px;margin:0 auto}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  /* header */
+  header{display:flex;align-items:center;gap:14px;padding:14px 18px;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--border);border-radius:12px;margin-bottom:16px;flex-wrap:wrap}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--bull);
+    box-shadow:0 0 0 0 rgba(46,204,113,.5);animation:pulse 2.2s infinite}
+  .dot.down{background:var(--bear);animation:none}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(46,204,113,.5)}
+    70%{box-shadow:0 0 0 10px rgba(46,204,113,0)}100%{box-shadow:0 0 0 0 rgba(46,204,113,0)}}
+  .brand{font-weight:700;font-size:18px;letter-spacing:.5px}
+  .brand b{color:var(--accent)}
+  .env{font-family:var(--mono);font-size:11px;color:var(--muted);
+    padding:3px 8px;border:1px solid var(--border2);border-radius:6px;
+    text-transform:uppercase;letter-spacing:1px}
+  .sym-tags{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .sym{font-family:var(--mono);font-size:12px;padding:5px 10px;border-radius:7px;
+    background:var(--bg2);border:1px solid var(--border2);color:var(--txt)}
+  .sym .pr{color:var(--muted);margin-left:6px}
+
+  /* metric cards */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+  .card{background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;inset:0 0 auto 0;height:2px;
+    background:linear-gradient(90deg,var(--accent),transparent)}
+  .card .lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+  .card .val{font-family:var(--mono);font-size:28px;font-weight:700;margin-top:6px}
+  .card .sub{font-size:12px;color:var(--muted);margin-top:4px}
+  .card .sub .g{color:var(--bull)} .card .sub .r{color:var(--bear)}
+
+  /* generic panel */
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2));
+    border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;
+    color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .panel h3 .tick{width:6px;height:6px;border-radius:2px;background:var(--accent)}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+  .grid-of{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+
+  /* orderflow */
+  .of-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+  .of-sym{font-family:var(--mono);font-weight:700;font-size:16px}
+  .of-price{font-family:var(--mono);font-size:15px;color:var(--txt)}
+  .of-rows{display:flex;flex-direction:column;gap:7px}
+  .of-row{display:flex;align-items:center;justify-content:space-between;
+    padding:7px 10px;background:var(--panel2);border:1px solid var(--border);border-radius:8px}
+  .of-row .k{font-size:12px;color:var(--muted)}
+  .of-row .v{font-family:var(--mono);font-size:13px;font-weight:600;
+    padding:2px 8px;border-radius:6px}
+  .v.bull{color:var(--bull);background:var(--bull-bg)}
+  .v.bear{color:var(--bear);background:var(--bear-bg)}
+  .v.neutral{color:var(--muted)}
+  .stale{font-size:10px;color:var(--warn);margin-left:6px}
+
+  /* bars (TFI/OBI/aggression) */
+  .bar{position:relative;height:6px;border-radius:4px;background:var(--bg2);
+    margin-top:6px;overflow:hidden}
+  .bar .fill{position:absolute;top:0;bottom:0;border-radius:4px}
+  .bar.center .mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--dim)}
+
+  /* signals table */
+  .filters{display:flex;gap:6px;margin-left:auto}
+  .filters button{font-family:var(--mono);font-size:11px;color:var(--muted);
+    background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
+    padding:4px 10px;cursor:pointer;transition:.15s}
+  .filters button:hover{color:var(--txt)}
+  .filters button.on{background:var(--accent);color:#04181a;border-color:var(--accent);font-weight:700}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:1px;
+    color:var(--dim);padding:6px 8px;border-bottom:1px solid var(--border)}
+  td{padding:7px 8px;border-bottom:1px solid var(--panel2);font-family:var(--mono)}
+  tr:hover td{background:rgba(57,208,216,.03)}
+  .pill{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:5px;
+    text-transform:uppercase;letter-spacing:.5px}
+  .pill.buy{color:var(--buy);background:var(--bull-bg)}
+  .pill.sell{color:var(--sell);background:var(--bear-bg)}
+  .pill.weak{color:var(--weak);background:rgba(95,116,136,.12)}
+  .pill.medium{color:var(--medium);background:rgba(245,166,35,.12)}
+  .pill.strong{color:var(--strong);background:var(--bear-bg)}
+  .reasons{color:var(--muted);font-size:11px}
+
+  /* cooldowns */
+  .cd-row{margin-bottom:10px}
+  .cd-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px}
+  .cd-top .lab{font-family:var(--mono)}
+  .cd-top .rem{font-family:var(--mono);color:var(--muted)}
+  .cd-top .rem.active{color:var(--warn)}
+  .cd-bar{height:8px;border-radius:5px;background:var(--bg2);overflow:hidden}
+  .cd-bar .fill{height:100%;border-radius:5px;
+    background:linear-gradient(90deg,var(--warn),#ffcf6b);transition:width .4s}
+  .cd-bar .fill.idle{background:var(--border2)}
+
+  /* health */
+  .health{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .hc{display:flex;align-items:center;gap:8px;padding:10px;background:var(--panel2);
+    border:1px solid var(--border);border-radius:8px}
+  .hc .led{width:9px;height:9px;border-radius:50%;flex:none}
+  .led.ok{background:var(--bull);box-shadow:0 0 8px var(--bull)}
+  .led.down{background:var(--bear);box-shadow:0 0 8px var(--bear)}
+  .led.unknown{background:var(--muted)}
+  .hc .nm{font-size:12px}
+  .hc .st{font-family:var(--mono);font-size:10px;color:var(--muted);margin-left:auto;text-transform:uppercase}
+
+  footer{text-align:center;color:var(--dim);font-size:11px;margin-top:18px;font-family:var(--mono)}
+  .upd{color:var(--muted)}
+
+  @media(max-width:860px){
+    .cards{grid-template-columns:repeat(2,1fr)}
+    .grid2,.grid-of{grid-template-columns:1fr}
+    .health{grid-template-columns:repeat(2,1fr)}
+    .sym-tags{margin-left:0;width:100%}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <span class="dot" id="statusDot"></span>
+    <span class="brand">MASKARA <b>Bot</b></span>
+    <span class="env" id="envTag">MAINNET</span>
+    <span class="env" id="uptimeTag" style="border-color:var(--border)">— —</span>
+    <div class="sym-tags" id="symTags">
+      <span class="sym">BTCUSDT<span class="pr" id="prBTC">—</span></span>
+      <span class="sym">ETHUSDT<span class="pr" id="prETH">—</span></span>
+    </div>
+  </header>
+
+  <!-- metric cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="lbl">Signals · 24h</div>
+      <div class="val mono" id="mTotal">—</div>
+      <div class="sub" id="mTotalSub">за последние 24 часа</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Buy / Sell</div>
+      <div class="val mono" id="mBuySell">—</div>
+      <div class="sub"><span class="g" id="mBuy">—</span> buy · <span class="r" id="mSell">—</span> sell</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Medium + Strong</div>
+      <div class="val mono" id="mMS">—</div>
+      <div class="sub" id="mMSsub">сильных сигналов</div>
+    </div>
+    <div class="card">
+      <div class="lbl">Last signal</div>
+      <div class="val mono" id="mLast">—</div>
+      <div class="sub">назад</div>
+    </div>
+  </div>
+
+  <!-- orderflow -->
+  <div class="grid-of" id="ofGrid">
+    <!-- filled by JS -->
+  </div>
+
+  <!-- signals + cooldowns -->
+  <div class="grid2">
+    <div class="panel">
+      <h3><span class="tick"></span>Последние сигналы
+        <div class="filters" id="filters">
+          <button data-p="1h">1h</button>
+          <button data-p="24h" class="on">24h</button>
+          <button data-p="7d">7d</button>
+        </div>
+      </h3>
+      <table>
+        <thead><tr><th>Время</th><th>Символ</th><th>Сигнал</th><th>Сила</th><th>Score</th><th>Причины</th></tr></thead>
+        <tbody id="sigBody"><tr><td colspan="6" style="color:var(--dim)">загрузка…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3><span class="tick"></span>Cooldown'ы</h3>
+      <div id="cdBody"><div style="color:var(--dim)">загрузка…</div></div>
+    </div>
+  </div>
+
+  <!-- health -->
+  <div class="panel">
+    <h3><span class="tick"></span>Состояние системы</h3>
+    <div class="health" id="healthBody">
+      <div class="hc"><span class="led unknown"></span><span class="nm">API</span><span class="st">—</span></div>
+      <div class="hc"><span class="led unknown"></span><span class="nm">Postgres</span><span class="st">—</span></div>
+      <div class="hc"><span class="led unknown"></span><span class="nm">Redis</span><span class="st">—</span></div>
+      <div class="hc"><span class="led unknown"></span><span class="nm">WebSocket</span><span class="st">—</span></div>
+    </div>
+  </div>
+
+  <footer>
+    polling каждые 3 сек · <span class="upd" id="lastUpd">—</span>
+  </footer>
+
+</div>
+
+<script>
+const SYMBOLS = ["BTCUSDT","ETHUSDT"];
+let period = "24h";
+const $ = id => document.getElementById(id);
+
+function fmtAgo(sec){
+  if(sec==null) return "—";
+  if(sec<60) return sec+"s";
+  if(sec<3600) return Math.floor(sec/60)+"m";
+  if(sec<86400) return Math.floor(sec/3600)+"h";
+  return Math.floor(sec/86400)+"d";
+}
+function fmtNum(x,d=2){
+  if(x==null||isNaN(x)) return "—";
+  return Number(x).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+}
+function fmtTime(iso){
+  if(!iso) return "—";
+  const dt=new Date(iso);
+  return dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+// классификация бычье/медвежье для подсветки
+function cls(v,pos=0,neg=0){
+  if(v==null||isNaN(v)) return "neutral";
+  if(v>pos) return "bull";
+  if(v<neg) return "bear";
+  return "neutral";
+}
+async function getJSON(url){
+  const r=await fetch(url,{cache:"no-store"});
+  return await r.json();
+}
+
+// ---- STATS ----
+async function loadStats(){
+  try{
+    const d=await getJSON("/dashboard/stats");
+    $("mTotal").textContent=(d.total_24h??0).toLocaleString("en-US");
+    $("mBuySell").textContent=(d.buy??0)+" / "+(d.sell??0);
+    $("mBuy").textContent=d.buy??0;
+    $("mSell").textContent=d.sell??0;
+    $("mMS").textContent=d.medium_strong??0;
+    $("mMSsub").textContent=`medium ${d.medium??0} · strong ${d.strong??0}`;
+    $("mLast").textContent=fmtAgo(d.last_signal_ago_sec);
+  }catch(e){ /* keep old */ }
+}
+
+// ---- ORDERFLOW ----
+function ofPanel(s){
+  const av=s.data_available;
+  const stale = av ? "" : `<span class="stale">нет данных</span>`;
+  const price = s.total_volume_1m!=null ? "" : "";
+  function row(k,val,c){
+    return `<div class="of-row"><span class="k">${k}</span><span class="v ${c}">${val}</span></div>`;
+  }
+  const delta = cls(s.delta_1m);
+  const cvd   = cls(s.cvd);
+  const tfi   = cls(s.tfi_1m,0.05,-0.05);
+  const obi   = cls(s.obi_top10,0.05,-0.05);
+  const agg   = s.buy_aggression_1m;
+  const aggCls = agg>0.55?"bull":(agg<0.45?"bear":"neutral");
+  return `
+    <div class="panel">
+      <div class="of-head">
+        <span class="of-sym">${s.symbol} ${stale}</span>
+        <span class="of-price mono">vol1m ${fmtNum(s.total_volume_1m,2)}</span>
+      </div>
+      <div class="of-rows">
+        ${row("Δ 1m (buy−sell)",fmtNum(s.delta_1m,2),delta)}
+        ${row("CVD",fmtNum(s.cvd,2),cvd)}
+        ${row("TFI 1m",fmtNum(s.tfi_1m,3),tfi)}
+        ${row("OBI top10",fmtNum(s.obi_top10,3),obi)}
+        ${row("Buy aggression 1m",(agg!=null?(agg*100).toFixed(1)+"%":"—"),aggCls)}
+        ${row("Large trades 1m",s.large_trade_count_1m??0,"neutral")}
+      </div>
+    </div>`;
+}
+async function loadOrderflow(){
+  try{
+    const results=await Promise.all(SYMBOLS.map(s=>getJSON("/dashboard/orderflow/"+s)));
+    $("ofGrid").innerHTML=results.map(ofPanel).join("");
+    // price tags in header (use vol as proxy not available -> skip price, show data flag)
+  }catch(e){ /* keep */ }
+}
+
+// ---- SIGNALS ----
+async function loadSignals(){
+  try{
+    const d=await getJSON(`/dashboard/signals?period=${period}&limit=20`);
+    const rows=(d.signals||[]).map(s=>{
+      const act=(s.action||"").toLowerCase();
+      const str=(s.strength||"").toLowerCase();
+      const reasons=(s.reasons||[]).join(", ");
+      return `<tr>
+        <td>${fmtTime(s.created_at)}</td>
+        <td>${s.symbol}</td>
+        <td><span class="pill ${act}">${s.action}</span></td>
+        <td><span class="pill ${str}">${s.strength}</span></td>
+        <td>${fmtNum(s.score,2)}</td>
+        <td class="reasons">${reasons||"—"}</td>
+      </tr>`;
+    }).join("");
+    $("sigBody").innerHTML=rows||`<tr><td colspan="6" style="color:var(--dim)">нет сигналов за период</td></tr>`;
+  }catch(e){
+    $("sigBody").innerHTML=`<tr><td colspan="6" style="color:var(--bear)">ошибка загрузки</td></tr>`;
+  }
+}
+
+// ---- COOLDOWNS ----
+async function loadCooldowns(){
+  try{
+    const d=await getJSON("/dashboard/cooldowns");
+    const items=d.cooldowns||[];
+    $("cdBody").innerHTML=items.map(c=>{
+      const pct=Math.round((c.progress||0)*100);
+      const fillW=c.active?(100-pct):0; // remaining portion
+      const remW=c.active?Math.round((c.remaining_sec/(c.ttl_total_sec||60))*100):0;
+      return `<div class="cd-row">
+        <div class="cd-top">
+          <span class="lab">${c.symbol} <span class="pill ${c.action.toLowerCase()}">${c.action}</span></span>
+          <span class="rem ${c.active?'active':''}">${c.active?c.remaining_sec+"s":"свободен"}</span>
+        </div>
+        <div class="cd-bar"><div class="fill ${c.active?'':'idle'}" style="width:${c.active?remW:100}%"></div></div>
+      </div>`;
+    }).join("")||`<div style="color:var(--dim)">нет данных</div>`;
+  }catch(e){ /* keep */ }
+}
+
+// ---- HEALTH ----
+async function loadHealth(){
+  try{
+    const d=await getJSON("/dashboard/health");
+    const c=d.components||{};
+    const map=[["API","api"],["Postgres","postgres"],["Redis","redis"],["WebSocket","websocket"]];
+    $("healthBody").innerHTML=map.map(([nm,key])=>{
+      const st=c[key]||"unknown";
+      return `<div class="hc"><span class="led ${st}"></span><span class="nm">${nm}</span><span class="st">${st}</span></div>`;
+    }).join("");
+    const ok = d.status==="ok";
+    $("statusDot").className = ok ? "dot" : "dot down";
+  }catch(e){
+    $("statusDot").className="dot down";
+  }
+}
+
+function stamp(){
+  $("lastUpd").textContent="обновлено "+new Date().toLocaleTimeString("ru-RU");
+}
+
+async function tick(){
+  await Promise.allSettled([loadStats(),loadOrderflow(),loadSignals(),loadCooldowns(),loadHealth()]);
+  stamp();
+}
+
+// period filter
+$("filters").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  period=b.dataset.p;
+  [...$("filters").children].forEach(x=>x.classList.toggle("on",x===b));
+  loadSignals();
+});
+
+tick();
+setInterval(tick,3000);
+</script>
+</body>
+</html>
