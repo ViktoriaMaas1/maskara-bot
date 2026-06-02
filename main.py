@@ -22,7 +22,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -145,7 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook.router)
     app.include_router(order_flow.router)
     app.include_router(signals_api.router)
-    app.include_router(dashboard_api.router)
+    app.include_router(dashboard_api.router, dependencies=[Depends(dashboard_api.verify_dashboard_auth)])
 
     # ---------- Обработчик ошибок валидации ----------
     @app.exception_handler(RequestValidationError)

@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, status
+import secrets
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
@@ -282,3 +284,41 @@ async def get_dashboard_health() -> JSONResponse:
             "components": components,
         },
     )
+
+# CSE= Dashboard HTML page + Basic Auth (Stage 4)
+from fastapi.responses import HTMLResponse
+from pathlib import Path
+
+_security = HTTPBasic(auto_error=False)
+
+
+def verify_dashboard_auth(
+    credentials: HTTPBasicCredentials | None = Depends(_security),
+) -> None:
+    from app.config import get_settings
+    settings = get_settings()
+    user = settings.dashboard_user
+    password = settings.dashboard_password.get_secret_value()
+    if not user and not password:
+        return
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Basic"})
+    ok_u = secrets.compare_digest(credentials.username, user)
+    ok_p = secrets.compare_digest(credentials.password, password)
+    if not (ok_u and ok_p):
+        raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
+
+
+# Apply auth to all dashboard routes
+router.dependencies.append(Depends(verify_dashboard_auth))
+
+_DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
+
+
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_page() -> HTMLResponse:
+    try:
+        return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.exception("dashboard page read failed")
+        return HTMLResponse(f"<h1>Dashboard unavailable</h1><p>{e}</p>", status_code=500)

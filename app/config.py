@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))
     news_api_key: SecretStr = Field(default=SecretStr(""))
 
+    # =================================================================
+    # DASHBOARD AUTH (Stage 4)
+    # =================================================================
+    dashboard_user: str = Field(default="")
+    dashboard_password: SecretStr = Field(default=SecretStr(""))
+
     # =====================================================
     # SIGNALS (Stage 8)
     # =====================================================
