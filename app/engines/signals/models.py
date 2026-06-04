@@ -73,3 +73,13 @@ class Signal(BaseModel):
     note: Optional[str] = Field(
         None, description="Необязательное человекочитаемое описание сигнала"
     )
+
+    # ----- News influence (Stage 10 Phase 3) -----
+    # Aggregated news mood [-1..1] at signal time, or None if unavailable.
+    news_mood: Optional[float] = Field(
+        None, description="Средний sentiment свежих новостей [-1..1] на момент сигнала"
+    )
+    # Score delta applied by news (after - before), 0.0 if none.
+    news_score_adjustment: Optional[float] = Field(
+        None, description="Насколько новости скорректировали score (дельта)"
+    )

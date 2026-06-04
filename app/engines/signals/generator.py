@@ -26,6 +26,8 @@ from app.engines.signals.models import Signal, SignalAction, SignalStrength
 from app.engines.signals.notifier import SignalNotifier
 from app.engines.signals.rules import ALL_RULES
 from app.engines.signals.store import SignalStore
+from app.config import get_settings
+from app.engines.news.engine import get_news_engine
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,11 @@ class SignalGenerator:
         if final is None:
             return None
 
+        # 2b. News sentiment influence (Stage 10 Phase 3): adjust score or veto.
+        final = await self._apply_news_sentiment(final)
+        if final is None:
+            return None
+
         # 3. Cooldown check
         allowed = await self._cooldown.is_allowed(final.symbol, final.action.value)
         if not allowed:
@@ -133,6 +140,61 @@ class SignalGenerator:
     # ============================================================
     # Внутренние методы
     # ============================================================
+
+    async def _apply_news_sentiment(self, signal: Signal) -> Optional[Signal]:
+        """Stage 10 Phase 3: news sentiment influence on a signal (hybrid C).
+
+        - Soft: nudge score by aligned_mood * weight.
+        - Hard: veto the signal if aligned_mood <= veto_threshold.
+        Aligned mood = mood for BUY, -mood for SELL (bullish news favors BUY).
+        Fully fault-tolerant: any failure leaves the signal unchanged.
+        Controlled by settings.news_signal_influence_enabled.
+        """
+        settings = get_settings()
+        if not settings.news_signal_influence_enabled:
+            return signal
+
+        # Aggregate mood from freshest news; on any failure, pass signal through.
+        try:
+            snap = await get_news_engine().get_snapshot(limit=settings.news_signal_mood_items)
+            if not snap.data_available or not snap.items:
+                return signal
+            scores = [it.sentiment_score for it in snap.items
+                      if it.sentiment_score is not None]
+            if not scores:
+                return signal
+            mood = sum(scores) / len(scores)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("News mood unavailable - signal unchanged",
+                           extra={"error": str(e)})
+            return signal
+
+        aligned = mood if signal.action == SignalAction.BUY else -mood
+        signal.news_mood = round(mood, 4)
+
+        # Hard veto
+        if aligned <= settings.news_signal_veto_threshold:
+            logger.info(
+                "Signal VETOED by news sentiment",
+                extra={"symbol": signal.symbol, "action": signal.action.value,
+                       "mood": round(mood, 3), "aligned": round(aligned, 3),
+                       "threshold": settings.news_signal_veto_threshold},
+            )
+            return None
+
+        # Soft adjustment
+        before = signal.score
+        delta = aligned * settings.news_signal_score_weight
+        signal.score = max(0.0, min(1.0, before + delta))
+        signal.news_score_adjustment = round(signal.score - before, 4)
+        logger.info(
+            "News sentiment adjusted signal score",
+            extra={"symbol": signal.symbol, "action": signal.action.value,
+                   "mood": round(mood, 3), "score_before": round(before, 3),
+                   "score_after": round(signal.score, 3),
+                   "delta": signal.news_score_adjustment},
+        )
+        return signal
 
     def _run_rules(self, snapshot: OrderFlowSnapshot) -> list[Signal]:
         """Прогнать все правила, собрать non-None результаты."""

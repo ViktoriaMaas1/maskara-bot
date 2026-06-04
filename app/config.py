@@ -166,6 +166,18 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini")
     news_sentiment_enabled: bool = Field(default=False)
 
+    # =========================================================
+    # NEWS -> SIGNAL INFLUENCE (Stage 10 Phase 3)
+    # =========================================================
+    # Master switch: news sentiment affects trading signals.
+    news_signal_influence_enabled: bool = Field(default=False)
+    # Soft score adjustment weight: new_score = score + aligned_mood * weight
+    news_signal_score_weight: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Hard veto: block a signal if aligned mood <= this threshold (negative).
+    news_signal_veto_threshold: float = Field(default=-0.6, ge=-1.0, le=0.0)
+    # How many freshest news items feed the aggregated mood.
+    news_signal_mood_items: int = Field(default=20, ge=1, le=60)
+
     # =================================================================
     # DASHBOARD AUTH (Stage 4)
     # =================================================================
