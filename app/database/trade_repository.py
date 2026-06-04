@@ -23,7 +23,7 @@ from typing import Optional
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Trade
+from app.database.models import Trade, AiDecision
 
 
 class TradeRepository:
@@ -219,3 +219,71 @@ class TradeRepository:
         await self.session.commit()
         await self.session.refresh(trade)
         return trade
+
+    # ============================================================
+    # AI DECISION методы (Stage 11) — журнал решений
+    # ============================================================
+
+    async def save_ai_decision(
+        self,
+        *,
+        symbol: str,
+        decision: str,
+        direction: Optional[str],
+        confidence: Optional[str],
+        final_score: Optional[float],
+        components: list,
+        full_response: dict,
+        signal_id: Optional[uuid.UUID] = None,
+    ) -> "AiDecision":
+        """Записать решение AI Decision Engine в журнал (ai_decisions).
+
+        Stage 11: пишем только TRADE-решения (компактный журнал намерений
+        войти). Маппит компоненты scoring в score-колонки, полный вердикт
+        кладёт в full_response (JSONB). signal_id=None для проактивных
+        решений (без TradingView).
+
+        Returns: закоммиченный AiDecision с id и created_at.
+        """
+        # извлекаем баллы по компонентам в соответствующие колонки
+        by_name = {c.get("name"): c for c in (full_response.get("components") or [])}
+
+        def pts(name: str) -> Optional[int]:
+            c = by_name.get(name)
+            if not c or not c.get("available"):
+                return None
+            return int(round(c.get("points", 0)))
+
+        # orderflow_score = сумма delta+imbalance+volume (если доступны)
+        of_parts = [pts("delta"), pts("imbalance"), pts("volume")]
+        of_avail = [p for p in of_parts if p is not None]
+        orderflow_score = sum(of_avail) if of_avail else None
+
+        row = AiDecision(
+            signal_id=signal_id,
+            decision=decision,
+            direction=direction,
+            confidence=confidence,
+            final_score=int(round(final_score)) if final_score is not None else None,
+            liquidity_score=pts("liquidity"),
+            orderflow_score=orderflow_score,
+            news_score=pts("news"),
+            social_score=pts("social"),
+            trend_score=pts("trend"),
+            full_response=full_response,
+        )
+        self.session.add(row)
+        await self.session.commit()
+        await self.session.refresh(row)
+        return row
+
+    async def get_recent_ai_decisions(self, limit: int = 20) -> list:
+        """Последние N решений AI (для дашборда/истории)."""
+        stmt = (
+            select(AiDecision)
+            .order_by(AiDecision.created_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+

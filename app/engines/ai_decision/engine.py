@@ -119,6 +119,38 @@ class AIDecisionEngine:
         )
         return result
 
+    async def decide_and_log(self, symbol: str,
+                             tv_side: Optional[str] = None) -> ScoringResult:
+        """decide() + запись в журнал, если решение TRADE.
+
+        Чистый decide() не трогает БД. Эта обёртка журналирует только
+        TRADE-решения (Stage 11, компактный журнал). Сбой записи в БД
+        не ломает результат — решение всегда возвращается.
+        """
+        result = await self.decide(symbol, tv_side=tv_side)
+        if result.decision == "TRADE":
+            try:
+                from app.database.db import get_sessionmaker
+                from app.database.trade_repository import TradeRepository
+                sm = get_sessionmaker()
+                async with sm() as session:
+                    repo = TradeRepository(session)
+                    await repo.save_ai_decision(
+                        symbol=symbol,
+                        decision=result.decision,
+                        direction=result.direction,
+                        confidence=result.confidence,
+                        final_score=result.final_score,
+                        components=[c.model_dump() for c in result.components],
+                        full_response=result.model_dump(),
+                    )
+                logger.info("AI decision logged: %s %s score=%s",
+                            symbol, result.direction, result.final_score)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("failed to log AI decision for %s: %s", symbol, e)
+        return result
+
+
 
 _ai_engine: Optional[AIDecisionEngine] = None
 

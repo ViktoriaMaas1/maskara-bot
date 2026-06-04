@@ -98,8 +98,9 @@ class AiDecision(Base):
         DateTime(timezone=True), server_default=func.now(), index=True
     )
 
-    signal_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("webhook_signals.id", ondelete="CASCADE"), index=True
+    signal_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("webhook_signals.id", ondelete="CASCADE"),
+        index=True, nullable=True,
     )
 
     # Решение

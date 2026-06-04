@@ -445,7 +445,7 @@ async def get_ai_decision(symbol: str, tv_side: str | None = None) -> JSONRespon
             content={"available": False, "reason": "engine_not_initialized"},
         )
     try:
-        result = await engine.decide(symbol.upper(), tv_side=tv_side)
+        result = await engine.decide_and_log(symbol.upper(), tv_side=tv_side)
         payload = result.model_dump()
         payload["available"] = True
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
@@ -455,3 +455,38 @@ async def get_ai_decision(symbol: str, tv_side: str | None = None) -> JSONRespon
             status_code=status.HTTP_200_OK,
             content={"available": False, "reason": "error", "error": str(e)},
         )
+
+
+# ---- Stage 11: AI decisions journal (history) ----
+from app.database.db import get_sessionmaker as _get_sm_hist
+from app.database.trade_repository import TradeRepository as _TradeRepo_hist
+
+
+@router.get("/ai-history", summary="Журнал решений AI (последние N)")
+async def get_ai_history(limit: int = 20) -> JSONResponse:
+    """Последние записанные TRADE-решения из журнала ai_decisions."""
+    try:
+        sm = _get_sm_hist()
+        async with sm() as session:
+            repo = _TradeRepo_hist(session)
+            rows = await repo.get_recent_ai_decisions(limit=limit)
+            items = [{
+                "id": str(r.id),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "decision": r.decision,
+                "direction": r.direction,
+                "confidence": r.confidence,
+                "final_score": r.final_score,
+                "orderflow_score": r.orderflow_score,
+                "liquidity_score": r.liquidity_score,
+                "news_score": r.news_score,
+                "symbol": (r.full_response or {}).get("symbol"),
+                "reason": (r.full_response or {}).get("reason", []),
+                "warnings": (r.full_response or {}).get("warnings", []),
+            } for r in rows]
+            return JSONResponse(status_code=status.HTTP_200_OK,
+                                content={"available": True, "count": len(items), "items": items})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("/dashboard/ai-history failed")
+        return JSONResponse(status_code=status.HTTP_200_OK,
+                            content={"available": False, "reason": "error", "error": str(e), "items": []})
