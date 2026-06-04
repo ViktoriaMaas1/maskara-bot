@@ -15,6 +15,7 @@ from app.engines.order_flow.engine import (
     OrderFlowEngineNotInitialized,
     get_order_flow_engine,
 )
+from app.engines.news.engine import get_news_engine
 from app.config import get_settings
 from app.utils.redis_client import get_redis
 from app.bybit.websocket_client import get_websocket
@@ -236,6 +237,53 @@ async def get_dashboard_cooldowns() -> JSONResponse:
             status_code=status.HTTP_200_OK,
             content={"data_available": False, "reason": str(e), "cooldowns": []},
         )
+# ====================================================================
+# GET /dashboard/news-mood - текущий новостной фон (Stage 10 Phase 3)
+# ====================================================================
+@router.get("/news-mood", summary="Текущий агрегированный новостной фон")
+async def get_dashboard_news_mood() -> JSONResponse:
+    """Средний sentiment свежих новостей + параметры влияния на сигналы.
+
+    Не пишет в БД - считает фон на лету из снапшота новостей,
+    как это делает SignalGenerator в Phase 3. Никогда не падает.
+    """
+    s = get_settings()
+    base = {
+        "available": False,
+        "mood": None,
+        "items_used": 0,
+        "label": "no data",
+        "influence_enabled": s.news_signal_influence_enabled,
+        "veto_threshold": s.news_signal_veto_threshold,
+        "weight": s.news_signal_score_weight,
+    }
+    try:
+        snap = await get_news_engine().get_snapshot(limit=s.news_signal_mood_items)
+        if not snap.data_available or not snap.items:
+            return JSONResponse(status_code=status.HTTP_200_OK, content=base)
+        scores = [it.sentiment_score for it in snap.items
+                  if it.sentiment_score is not None]
+        if not scores:
+            return JSONResponse(status_code=status.HTTP_200_OK, content=base)
+        mood = sum(scores) / len(scores)
+        if mood >= 0.3:
+            label = "bullish"
+        elif mood <= -0.3:
+            label = "bearish"
+        else:
+            label = "neutral"
+        base.update({
+            "available": True,
+            "mood": round(mood, 4),
+            "items_used": len(scores),
+            "label": label,
+        })
+        return JSONResponse(status_code=status.HTTP_200_OK, content=base)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("/dashboard/news-mood failed: %s", e)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=base)
+
+
 # ====================================================================
 # GET /dashboard/health - расширенный health (API/PG/Redis/WS)
 # ====================================================================

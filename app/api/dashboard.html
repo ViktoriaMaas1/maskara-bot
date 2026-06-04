@@ -92,6 +92,13 @@
   .bar.center .mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:var(--dim)}
 
   /* signals table */
+  .mood-badge{font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:6px;
+    margin-left:8px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;
+    border:1px solid var(--border2);color:var(--muted);vertical-align:middle}
+  .mood-badge.bullish{color:#16a34a;border-color:#16a34a}
+  .mood-badge.bearish{color:#dc2626;border-color:#dc2626}
+  .mood-badge.neutral{color:var(--muted);border-color:var(--border2)}
+  .mood-badge.off{opacity:.45}
   .filters{display:flex;gap:6px;margin-left:auto}
   .filters button{font-family:var(--mono);font-size:11px;color:var(--muted);
     background:var(--bg2);border:1px solid var(--border2);border-radius:6px;
@@ -241,6 +248,7 @@
   <div class="grid2">
     <div class="panel">
       <h3><span class="tick"></span>Последние сигналы
+        <span class="mood-badge" id="moodBadge" title="Новостной фон (влияние на сигналы)">—</span>
         <div class="filters" id="filters">
           <button data-p="1h">1h</button>
           <button data-p="24h" class="on">24h</button>
@@ -422,6 +430,26 @@ async function loadLiquidity(){
 }
 
 // ---- SIGNALS ----
+async function loadNewsMood(){
+  try{
+    const d=await getJSON(`/dashboard/news-mood`);
+    const el=$("moodBadge");
+    if(!el) return;
+    if(!d.available||d.mood===null){
+      el.className="mood-badge off";
+      el.textContent="фон: н/д";
+      el.title="Новостной фон недоступен";
+      return;
+    }
+    const lab=d.label||"neutral";
+    const moodStr=(d.mood>=0?"+":"")+Number(d.mood).toFixed(2);
+    el.className="mood-badge "+lab+(d.influence_enabled?"":" off");
+    el.textContent=`фон ${lab} ${moodStr}`;
+    el.title=d.influence_enabled
+      ? `Влияние ВКЛ · вес ${d.weight} · вето ≤ ${d.veto_threshold} · ${d.items_used} новостей`
+      : `Влияние ВЫКЛ · фон ${moodStr} · ${d.items_used} новостей`;
+  }catch(e){ /* keep */ }
+}
 async function loadSignals(){
   try{
     const d=await getJSON(`/dashboard/signals?period=${period}&limit=20`);
@@ -528,7 +556,7 @@ function stamp(){
 }
 
 async function tick(){
-  await Promise.allSettled([loadStats(),loadOrderflow(),loadLiquidity(),loadSignals(),loadCooldowns(),loadHealth(),loadNews()]);
+  await Promise.allSettled([loadStats(),loadOrderflow(),loadLiquidity(),loadSignals(),loadCooldowns(),loadHealth(),loadNews(),loadNewsMood()]);
   stamp();
 }
 
