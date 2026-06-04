@@ -349,3 +349,30 @@ async def get_dashboard_liquidity(symbol: str) -> JSONResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
+# ---- Stage 10: news endpoint for dashboard ----
+from app.engines.news.engine import (
+    NewsEngineNotInitialized as _NewsNotInit,
+    get_news_engine as _get_news_engine,
+)
+
+
+@router.get("/news", summary="News feed for dashboard")
+async def get_dashboard_news(limit: int = 20) -> JSONResponse:
+    try:
+        engine = _get_news_engine()
+    except _NewsNotInit:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"data_available": False, "reason": "engine_not_initialized", "items": []},
+        )
+    try:
+        snapshot = await engine.get_snapshot(limit=limit)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=snapshot.model_dump())
+    except Exception as e:
+        logger.exception("/dashboard/news failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )

@@ -1,6 +1,6 @@
 """
 MASKARA AI Trading Bot - entry point.
-Stage 8: Signal Generator + Dashboard. Stage 9: Liquidity Engine.
+Stage 8: Signal Generator + Dashboard. Stage 9: Liquidity Engine. Stage 10: News Engine.
 """
 
 from __future__ import annotations
@@ -35,6 +35,10 @@ from app.api import dashboard as dashboard_api
 from app.engines.liquidity.engine import init_liquidity_engine
 from app.api import liquidity as liquidity_api
 
+# Stage 10: News Engine
+from app.engines.news.engine import init_news_engine
+from app.workers.news_worker import init_news_worker, close_news_worker
+
 _settings = get_settings()
 setup_logging(level=_settings.log_level.value)
 
@@ -67,6 +71,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     init_liquidity_engine(get_market_cache())
 
+    # Stage 10: News Engine + background worker
+    _news_engine = init_news_engine()
+    _news_worker = init_news_worker(_news_engine, interval_sec=300)
+    await _news_worker.start()
+
     _signal_cooldown = CooldownGate(get_redis(), ttl_seconds=settings.signal_cooldown_sec)
     _signal_notifier = SignalNotifier()
     _signal_generator = SignalGenerator(
@@ -85,6 +94,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
     await close_signal_worker()
+    await close_news_worker()
     close_order_flow_engine()
     await close_market_cache()
     await close_websocket()
@@ -99,8 +109,8 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="MASKARA AI Trading Bot",
-        description="AI trading bot for Bybit Futures. Stage 8: signals + dashboard. Stage 9: liquidity engine.",
-        version="0.9.0-stage9",
+        description="AI trading bot for Bybit Futures. Stage 8: signals + dashboard. Stage 9: liquidity. Stage 10: news.",
+        version="0.10.0-stage10",
         lifespan=lifespan,
         docs_url="/docs" if not settings.is_production else None,
         redoc_url="/redoc" if not settings.is_production else None,
