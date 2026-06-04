@@ -159,6 +159,13 @@ class Settings(BaseSettings):
     coinglass_api_key: SecretStr = Field(default=SecretStr(""))
     news_api_key: SecretStr = Field(default=SecretStr(""))
 
+    # =========================================================
+    # NEWS SENTIMENT / OpenAI (Stage 10 Phase 2)
+    # =========================================================
+    openai_api_key: SecretStr = Field(default=SecretStr(""))
+    openai_model: str = Field(default="gpt-4o-mini")
+    news_sentiment_enabled: bool = Field(default=False)
+
     # =================================================================
     # DASHBOARD AUTH (Stage 4)
     # =================================================================

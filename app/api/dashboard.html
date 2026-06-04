@@ -167,6 +167,14 @@
   .news-src{font-family:var(--mono);padding:1px 6px;border:1px solid var(--border2);border-radius:5px;
     text-transform:uppercase;letter-spacing:.5px;font-size:10px}
   .news-time{font-family:var(--mono);color:var(--dim)}
+  .news-item.sent-bullish{border-left:3px solid #16a34a}
+  .news-item.sent-bearish{border-left:3px solid #dc2626}
+  .news-item.sent-neutral{border-left:3px solid var(--border2)}
+  .news-sent{font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:5px;
+    text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+  .news-sent.bullish{color:#16a34a;border:1px solid #16a34a}
+  .news-sent.bearish{color:#dc2626;border:1px solid #dc2626}
+  .news-sent.neutral{color:var(--muted);border:1px solid var(--border2)}
   .news-sum{font-size:11px;color:var(--muted);line-height:1.4;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 
@@ -498,10 +506,15 @@ async function loadNews(){
     $("newsBody").innerHTML=d.items.map(n=>{
       const sum=stripHtml(n.summary);
       const url=(n.url||"#").replace(/"/g,"&quot;");
-      return `<div class="news-item">
+      const s=(n.sentiment||"neutral");
+      const sclass=(s==="bullish"||s==="bearish")?s:"neutral";
+      const sscore=(n.sentiment_score!=null)?Number(n.sentiment_score).toFixed(2):"";
+      const sbadge=n.sentiment?`<span class="news-sent ${sclass}">${s}${sscore!==""?" "+sscore:""}</span>`:"";
+      return `<div class="news-item sent-${sclass}">
         <a href="${url}" target="_blank" rel="noopener">${stripHtml(n.title)}</a>
         <div class="news-meta">
           <span class="news-src">${n.source||"—"}</span>
+          ${sbadge}
           <span class="news-time">${newsAgo(n.published_ts)}</span>
         </div>
         ${sum?`<div class="news-sum">${sum}</div>`:""}
