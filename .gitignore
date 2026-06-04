@@ -84,3 +84,9 @@ main_en.py
 PROJEKT_*.txt
 PROJECT_CONTEXT.md.txt
 STAGE_DASHBOARD_PLAN.md.txt
+
+# debug dumps (session leftovers)
+_*.py
+_requirements.txt
+config_server.py
+PROJECT_CONTEXT.md
