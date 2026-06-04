@@ -305,6 +305,14 @@
     <h3><span class="tick"></span>AI-решение</h3>
     <div class="ai-grid" id="aiBody"><div style="color:var(--dim)">загрузка…</div></div>
   </div>
+  <!-- AI decisions history -->
+  <div class="panel">
+    <h3><span class="tick"></span>История решений</h3>
+    <table>
+      <thead><tr><th>Время</th><th>Символ</th><th>Решение</th><th>Score</th><th>Причины</th></tr></thead>
+      <tbody id="aiHistBody"><tr><td colspan="5" style="color:var(--dim)">загрузка…</td></tr></tbody>
+    </table>
+  </div>
   <!-- news -->
   <div class="panel">
     <h3><span class="tick"></span>Новости</h3>
@@ -457,6 +465,29 @@ async function loadLiquidity(){
 }
 
 // ---- SIGNALS ----
+async function loadAiHistory(){
+  const el=$("aiHistBody"); if(!el) return;
+  try{
+    const d=await getJSON(`/dashboard/ai-history?limit=20`);
+    const items=(d&&d.items)||[];
+    if(!items.length){
+      el.innerHTML=`<tr><td colspan="5" style="color:var(--dim)">нет записанных решений</td></tr>`;
+      return;
+    }
+    el.innerHTML=items.map(it=>{
+      const dir=(it.direction||"").toLowerCase();
+      const dirPill=it.direction?`<span class="pill ${dir==='long'?'buy':'sell'}">${it.direction}</span>`:"—";
+      const reasons=(it.reason||[]).join(", ");
+      return `<tr>
+        <td>${fmtTime(it.created_at)}</td>
+        <td>${it.symbol||"—"}</td>
+        <td><span class="pill ${it.decision==='TRADE'?'buy':''}">${it.decision}</span> ${dirPill}</td>
+        <td>${it.final_score!=null?it.final_score:"—"}</td>
+        <td class="reasons">${reasons||"—"}</td>
+      </tr>`;
+    }).join("");
+  }catch(e){ el.innerHTML=`<tr><td colspan="5" style="color:var(--bear)">ошибка загрузки</td></tr>`; }
+}
 async function loadAiDecision(){
   const el=$("aiBody"); if(!el) return;
   try{
@@ -619,7 +650,7 @@ function stamp(){
 }
 
 async function tick(){
-  await Promise.allSettled([loadStats(),loadOrderflow(),loadLiquidity(),loadSignals(),loadCooldowns(),loadHealth(),loadNews(),loadNewsMood(),loadAiDecision()]);
+  await Promise.allSettled([loadStats(),loadOrderflow(),loadLiquidity(),loadSignals(),loadCooldowns(),loadHealth(),loadNews(),loadNewsMood(),loadAiDecision(),loadAiHistory()]);
   stamp();
 }
 
