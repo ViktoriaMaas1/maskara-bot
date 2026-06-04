@@ -37,6 +37,7 @@ from app.api import liquidity as liquidity_api
 
 # Stage 10: News Engine
 from app.engines.news.engine import init_news_engine
+from app.engines.ai_decision.engine import init_ai_decision_engine
 from app.workers.news_worker import init_news_worker, close_news_worker
 
 _settings = get_settings()
@@ -75,6 +76,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _news_engine = init_news_engine()
     _news_worker = init_news_worker(_news_engine, interval_sec=300)
     await _news_worker.start()
+    # Stage 11: AI Decision Engine (scoring orchestrator)
+    init_ai_decision_engine()
 
     _signal_cooldown = CooldownGate(get_redis(), ttl_seconds=settings.signal_cooldown_sec)
     _signal_notifier = SignalNotifier()

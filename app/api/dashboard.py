@@ -424,3 +424,34 @@ async def get_dashboard_news(limit: int = 20) -> JSONResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
+# ---- Stage 11: AI Decision Engine endpoint ----
+from app.engines.ai_decision.engine import get_ai_decision_engine as _get_ai_engine
+
+
+@router.get("/ai-decision/{symbol}", summary="AI decision (scoring) for symbol")
+async def get_ai_decision(symbol: str, tv_side: str | None = None) -> JSONResponse:
+    """Прогон Scoring + AI Decision Engine по символу.
+
+    Адаптивная схема: считает только доступные источники, нормализует к 100.
+    Всегда отдаёт 200 (фронт сам решает, что показывать).
+    """
+    try:
+        engine = _get_ai_engine()
+    except RuntimeError:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"available": False, "reason": "engine_not_initialized"},
+        )
+    try:
+        result = await engine.decide(symbol.upper(), tv_side=tv_side)
+        payload = result.model_dump()
+        payload["available"] = True
+        return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("/dashboard/ai-decision failed")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"available": False, "reason": "error", "error": str(e)},
+        )
