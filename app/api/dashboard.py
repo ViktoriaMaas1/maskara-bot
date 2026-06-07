@@ -490,3 +490,30 @@ async def get_ai_history(limit: int = 20) -> JSONResponse:
         logger.exception("/dashboard/ai-history failed")
         return JSONResponse(status_code=status.HTTP_200_OK,
                             content={"available": False, "reason": "error", "error": str(e), "items": []})
+
+
+# ==============================================================
+# Stage 12: Self-Learning AI report (read-only, additive)
+# ==============================================================
+from app.engines.self_learning.report_service import (
+    build_decision_report as _build_ai_report,
+)
+
+
+@router.get("/ai-report", summary="Self-Learning: анализ журнала решений (Stage 12)")
+async def get_ai_report(limit: int = 200) -> JSONResponse:
+    """Агрегированные наблюдения и предложения по журналу AI-решений.
+
+    Только наблюдения + предложения для человека (без автоизменений).
+    Источник — журнал ai_decisions; closed-trades учитываются для
+    gating-дисклеймера (>=100 сделок для serious changes).
+    """
+    try:
+        report = await _build_ai_report(limit=limit)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=report)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("/dashboard/ai-report failed")
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"status": "error", "error": str(e)},
+        )
