@@ -144,6 +144,31 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(f"Error: {e}")
 
 
+
+
+async def cmd_open_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Открытые позиции"""
+    try:
+        from app.engines.executor.executor import TradeExecutor
+        executor = TradeExecutor()
+        result = await executor.get_open_positions()
+        
+        positions = result.get("positions", [])
+        if not positions:
+            await update.message.reply_text("No open positions")
+            return
+        
+        msg = "*Open Positions* 📈\n\n"
+        for pos in positions:
+            pnl_emoji = "📈" if pos["pnl"] > 0 else "📉"
+            msg += f"{pnl_emoji} {pos['symbol']} {pos['side']}\n• Size: {pos['size']}\n• Entry: ${pos['entry_price']:.2f}\n• Mark: ${pos['mark_price']:.2f}\n• P&L: ${pos['pnl']:.2f}\n\n"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        logger.exception("cmd_open_trades failed")
+        await update.message.reply_text(f"Error: {e}")
+
+
 def get_telegram_bot():
     """Инициализация бота"""
     settings = get_settings()
@@ -159,6 +184,7 @@ def get_telegram_bot():
     app.add_handler(CommandHandler("control", cmd_control))
     app.add_handler(CommandHandler("ai_report", cmd_ai_report))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("open_trades", cmd_open_trades))
     
     logger.info("Telegram bot initialized")
     return app
@@ -184,4 +210,5 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 # Добавляем handler
-app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
+    app.add_handler(CommandHandler("open_trades", cmd_open_trades))

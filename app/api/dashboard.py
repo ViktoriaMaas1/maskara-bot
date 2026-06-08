@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from pathlib import Path
 
 from app.database.db import get_sessionmaker
-from app.database.models import SignalRow
+from app.database.models import SignalRow, Trade
 from app.engines.order_flow.engine import (
     OrderFlowEngineNotInitialized,
     get_order_flow_engine,
@@ -700,6 +700,127 @@ async def get_backtest_results(limit: int = 1000) -> JSONResponse:
         return JSONResponse(status_code=status.HTTP_200_OK, content=results)
     except Exception as e:
         logger.exception("/dashboard/backtest failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+# ==============================================================
+# Stage 15: Trade Execution (Real Trading)
+# ==============================================================
+from app.engines.executor.executor import TradeExecutor as _TradeExecutor
+from pydantic import BaseModel
+
+
+class PlaceTradeRequest(BaseModel):
+    symbol: str
+    side: str  # BUY or SELL
+    qty: float
+    leverage: int = 5
+    take_profit: float | None = None
+    stop_loss: float | None = None
+    entry_price: float | None = None
+
+
+@router.post("/trades/place", summary="Place real trade (Stage 15)")
+async def place_trade(req: PlaceTradeRequest) -> JSONResponse:
+    """Плейсит реальный ордер на Bybit"""
+    try:
+        executor = _TradeExecutor()
+        result = await executor.place_trade(
+            symbol=req.symbol,
+            side=req.side,
+            qty=req.qty,
+            leverage=req.leverage,
+            take_profit=req.take_profit,
+            stop_loss=req.stop_loss,
+            entry_price=req.entry_price,
+        )
+        
+        if result["status"] == "ok":
+            return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+        else:
+            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content=result)
+    except Exception as e:
+        logger.exception("/trades/place failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.get("/trades/open", summary="Open positions (Stage 15)")
+async def get_open_trades() -> JSONResponse:
+    """Получает все открытые позиции"""
+    try:
+        executor = _TradeExecutor()
+        result = await executor.get_open_positions()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except Exception as e:
+        logger.exception("/trades/open failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.post("/trades/{trade_id}/close", summary="Close position (Stage 15)")
+async def close_trade(trade_id: str) -> JSONResponse:
+    """Закрывает позицию"""
+    try:
+        sm = get_sessionmaker()
+        async with sm() as session:
+            from sqlalchemy import select
+            stmt = select(Trade).where(Trade.id == int(trade_id))
+            result = await session.execute(stmt)
+            trade = result.scalar()
+            if not trade:
+                return JSONResponse(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    content={"status": "error", "message": "Trade not found"},
+                )
+        
+        executor = _TradeExecutor()
+        result = await executor.close_position(trade.symbol, trade.side)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+    except Exception as e:
+        logger.exception("/trades/close failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.get("/trades/history", summary="Trade history (Stage 15)")
+async def get_trade_history(limit: int = 20) -> JSONResponse:
+    """История всех трейдов"""
+    try:
+        sm = get_sessionmaker()
+        async with sm() as session:
+            from sqlalchemy import select
+            stmt = select(Trade).order_by(Trade.created_at.desc()).limit(limit)
+            result = await session.execute(stmt)
+            trades = result.scalars().all()
+            
+            items = [{
+                "id": str(t.id),
+                "symbol": t.symbol,
+                "side": t.side,
+                "qty": t.qty,
+                "entry_price": float(t.entry_price) if t.entry_price else None,
+                "exit_price": float(t.exit_price) if t.exit_price else None,
+                "pnl": float(t.pnl) if t.pnl else None,
+                "status": t.status,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+            } for t in trades]
+            
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"status": "ok", "trades": items},
+            )
+    except Exception as e:
+        logger.exception("/trades/history failed")
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
