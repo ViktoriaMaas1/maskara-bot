@@ -123,6 +123,27 @@ async def cmd_ai_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(f"Error: {e}")
 
 
+
+
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Backtest results"""
+    try:
+        from app.engines.backtest.engine import run_backtest
+        results = await run_backtest(limit=1000)
+        
+        if results.get("status") != "ok":
+            await update.message.reply_text("Backtest unavailable")
+            return
+        
+        metrics = results.get("metrics", {})
+        msg = f"*Backtest Results* 📊\n\n*Summary:*\n• Trades: {metrics.get('total_trades', 0)}\n• Wins: {metrics.get('wins', 0)}\n• Losses: {metrics.get('losses', 0)}\n• Win Rate: {metrics.get('win_rate', 0):.1f}%\n\n*Performance:*\n• Profit Factor: {metrics.get('profit_factor', 0):.2f}\n• Total Return: {metrics.get('total_return', 0):.1f}%\n• Max Drawdown: {metrics.get('max_drawdown', 0):.2f}%\n• Sharpe: {metrics.get('sharpe_ratio', 0):.2f}"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        logger.exception("cmd_backtest failed")
+        await update.message.reply_text(f"Error: {e}")
+
+
 def get_telegram_bot():
     """Инициализация бота"""
     settings = get_settings()
@@ -137,6 +158,30 @@ def get_telegram_bot():
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("control", cmd_control))
     app.add_handler(CommandHandler("ai_report", cmd_ai_report))
+    app.add_handler(CommandHandler("backtest", cmd_backtest))
     
     logger.info("Telegram bot initialized")
     return app
+
+
+async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Backtest results"""
+    try:
+        from app.engines.backtest.engine import run_backtest
+        results = await run_backtest(limit=1000)
+        
+        if results.get("status") != "ok":
+            await update.message.reply_text("Backtest unavailable")
+            return
+        
+        metrics = results.get("metrics", {})
+        msg = f"*Backtest Results* 📊\n\n*Summary:*\n• Trades: {metrics.get('total_trades', 0)}\n• Wins: {metrics.get('wins', 0)}\n• Losses: {metrics.get('losses', 0)}\n• Win Rate: {metrics.get('win_rate', 0):.1f}%\n\n*Performance:*\n• Profit Factor: {metrics.get('profit_factor', 0):.2f}\n• Total Return: {metrics.get('total_return', 0):.1f}%\n• Max Drawdown: {metrics.get('max_drawdown', 0):.2f}%\n• Sharpe Ratio: {metrics.get('sharpe_ratio', 0):.2f}"
+        
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        logger.exception("cmd_backtest failed")
+        await update.message.reply_text(f"Error: {e}")
+
+
+# Добавляем handler
+app.add_handler(CommandHandler("backtest", cmd_backtest))

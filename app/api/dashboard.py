@@ -6,8 +6,9 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from sqlalchemy import func, select
+from pathlib import Path
 
 from app.database.db import get_sessionmaker
 from app.database.models import SignalRow
@@ -20,9 +21,66 @@ from app.config import get_settings
 from app.utils.redis_client import get_redis
 from app.bybit.websocket_client import get_websocket
 
+# Stage 13: Settings service
+from app.api.settings import (
+    get_bot_state,
+    update_bot_state,
+    build_settings_response,
+    build_status_response,
+)
+from app.api.settings_schemas import (
+    BotSettingsResponse,
+    BotStatusResponse,
+    SettingsUpdateRequest,
+    ControlRequest,
+    ControlResponse,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+# ====================================================================
+# Authentication (Stage 4)
+# ====================================================================
+
+_security = HTTPBasic(auto_error=False)
+
+
+def verify_dashboard_auth(
+    credentials: HTTPBasicCredentials | None = Depends(_security),
+) -> None:
+    settings = get_settings()
+    user = settings.dashboard_user
+    password = settings.dashboard_password.get_secret_value()
+    if not user and not password:
+        return
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Basic"})
+    ok_u = secrets.compare_digest(credentials.username, user)
+    ok_p = secrets.compare_digest(credentials.password, password)
+    if not (ok_u and ok_p):
+        raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
+
+
+# Apply auth to all dashboard routes
+router.dependencies.append(Depends(verify_dashboard_auth))
+
+_DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
+
+
+# ====================================================================
+# GET / - Dashboard HTML page (Stage 4)
+# ====================================================================
+
+@router.get("", response_class=HTMLResponse, include_in_schema=False)
+async def dashboard_page() -> HTMLResponse:
+    try:
+        return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.exception("dashboard page read failed")
+        return HTMLResponse(f"<h1>Dashboard unavailable</h1><p>{e}</p>", status_code=500)
 
 
 # ====================================================================
@@ -90,6 +148,8 @@ async def get_dashboard_stats() -> JSONResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
 # ====================================================================
 # GET /dashboard/orderflow/{symbol} - live snapshot метрик
 # ====================================================================
@@ -122,6 +182,8 @@ async def get_dashboard_orderflow(symbol: str) -> JSONResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
 # ====================================================================
 # GET /dashboard/signals - последние сигналы + фильтр периода
 # ====================================================================
@@ -187,6 +249,8 @@ async def get_dashboard_signals(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
 # ====================================================================
 # GET /dashboard/cooldowns - активные cooldown'ы (вариант B: TTL ключей)
 # ====================================================================
@@ -237,9 +301,12 @@ async def get_dashboard_cooldowns() -> JSONResponse:
             status_code=status.HTTP_200_OK,
             content={"data_available": False, "reason": str(e), "cooldowns": []},
         )
+
+
 # ====================================================================
 # GET /dashboard/news-mood - текущий новостной фон (Stage 10 Phase 3)
 # ====================================================================
+
 @router.get("/news-mood", summary="Текущий агрегированный новостной фон")
 async def get_dashboard_news_mood() -> JSONResponse:
     """Средний sentiment свежих новостей + параметры влияния на сигналы.
@@ -279,7 +346,7 @@ async def get_dashboard_news_mood() -> JSONResponse:
             "label": label,
         })
         return JSONResponse(status_code=status.HTTP_200_OK, content=base)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning("/dashboard/news-mood failed: %s", e)
         return JSONResponse(status_code=status.HTTP_200_OK, content=base)
 
@@ -333,46 +400,11 @@ async def get_dashboard_health() -> JSONResponse:
         },
     )
 
-# CSE= Dashboard HTML page + Basic Auth (Stage 4)
-from fastapi.responses import HTMLResponse
-from pathlib import Path
 
-_security = HTTPBasic(auto_error=False)
+# ====================================================================
+# Stage 9: liquidity endpoint for dashboard
+# ====================================================================
 
-
-def verify_dashboard_auth(
-    credentials: HTTPBasicCredentials | None = Depends(_security),
-) -> None:
-    from app.config import get_settings
-    settings = get_settings()
-    user = settings.dashboard_user
-    password = settings.dashboard_password.get_secret_value()
-    if not user and not password:
-        return
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Not authenticated", headers={"WWW-Authenticate": "Basic"})
-    ok_u = secrets.compare_digest(credentials.username, user)
-    ok_p = secrets.compare_digest(credentials.password, password)
-    if not (ok_u and ok_p):
-        raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
-
-
-# Apply auth to all dashboard routes
-router.dependencies.append(Depends(verify_dashboard_auth))
-
-_DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
-
-
-@router.get("", response_class=HTMLResponse, include_in_schema=False)
-async def dashboard_page() -> HTMLResponse:
-    try:
-        return HTMLResponse(_DASHBOARD_HTML.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.exception("dashboard page read failed")
-        return HTMLResponse(f"<h1>Dashboard unavailable</h1><p>{e}</p>", status_code=500)
-
-
-# ---- Stage 9: liquidity endpoint for dashboard ----
 from app.engines.liquidity.engine import (
     LiquidityEngineNotInitialized as _LiqNotInit,
     get_liquidity_engine as _get_liq_engine,
@@ -399,7 +431,10 @@ async def get_dashboard_liquidity(symbol: str) -> JSONResponse:
         )
 
 
-# ---- Stage 10: news endpoint for dashboard ----
+# ====================================================================
+# Stage 10: news endpoint for dashboard
+# ====================================================================
+
 from app.engines.news.engine import (
     NewsEngineNotInitialized as _NewsNotInit,
     get_news_engine as _get_news_engine,
@@ -426,7 +461,10 @@ async def get_dashboard_news(limit: int = 20) -> JSONResponse:
         )
 
 
-# ---- Stage 11: AI Decision Engine endpoint ----
+# ====================================================================
+# Stage 11: AI Decision Engine endpoint
+# ====================================================================
+
 from app.engines.ai_decision.engine import get_ai_decision_engine as _get_ai_engine
 
 
@@ -449,7 +487,7 @@ async def get_ai_decision(symbol: str, tv_side: str | None = None) -> JSONRespon
         payload = result.model_dump()
         payload["available"] = True
         return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("/dashboard/ai-decision failed")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
@@ -457,7 +495,10 @@ async def get_ai_decision(symbol: str, tv_side: str | None = None) -> JSONRespon
         )
 
 
-# ---- Stage 11: AI decisions journal (history) ----
+# ====================================================================
+# Stage 11: AI decisions journal (history)
+# ====================================================================
+
 from app.database.db import get_sessionmaker as _get_sm_hist
 from app.database.trade_repository import TradeRepository as _TradeRepo_hist
 
@@ -486,7 +527,7 @@ async def get_ai_history(limit: int = 20) -> JSONResponse:
             } for r in rows]
             return JSONResponse(status_code=status.HTTP_200_OK,
                                 content={"available": True, "count": len(items), "items": items})
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("/dashboard/ai-history failed")
         return JSONResponse(status_code=status.HTTP_200_OK,
                             content={"available": False, "reason": "error", "error": str(e), "items": []})
@@ -495,6 +536,7 @@ async def get_ai_history(limit: int = 20) -> JSONResponse:
 # ==============================================================
 # Stage 12: Self-Learning AI report (read-only, additive)
 # ==============================================================
+
 from app.engines.self_learning.report_service import (
     build_decision_report as _build_ai_report,
 )
@@ -511,9 +553,154 @@ async def get_ai_report(limit: int = 200) -> JSONResponse:
     try:
         report = await _build_ai_report(limit=limit)
         return JSONResponse(status_code=status.HTTP_200_OK, content=report)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.exception("/dashboard/ai-report failed")
         return JSONResponse(
             status_code=status.HTTP_200_OK,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+# ==============================================================
+# Stage 13: Bot Settings, Status, and Control
+# ==============================================================
+
+@router.get("/settings", summary="Текущие параметры бота (Stage 13)")
+async def get_settings_endpoint() -> JSONResponse:
+    """Получить текущие параметры бота (static + runtime)."""
+    try:
+        data = await build_settings_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=data)
+    except Exception as e:
+        logger.exception("/dashboard/settings failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.post("/settings", summary="Обновить параметры бота (Stage 13)")
+async def update_settings_endpoint(req: SettingsUpdateRequest) -> JSONResponse:
+    """Обновить параметры бота (runtime состояние в Redis)."""
+    try:
+        updates = req.model_dump(exclude_none=True)
+        if not updates:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"status": "error", "error": "No fields to update"},
+            )
+        
+        await update_bot_state(updates)
+        data = await build_settings_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=data)
+    except Exception as e:
+        logger.exception("/dashboard/settings POST failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.get("/status", summary="Статус бота (Stage 13)")
+async def get_status_endpoint() -> JSONResponse:
+    """Получить статус бота (balance, positions, trades, AI)."""
+    try:
+        data = await build_status_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=data)
+    except Exception as e:
+        logger.exception("/dashboard/status failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+@router.post("/control", summary="Управление ботом (Stage 13)")
+async def control_endpoint(req: ControlRequest) -> JSONResponse:
+    """Управление ботом (включить/выключить, изменить параметры)."""
+    try:
+        action = req.action.lower()
+        
+        if action == "on":
+            await update_bot_state({"trading_enabled": True})
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"status": "ok", "message": "Trading enabled", "updated_value": "trading_enabled=true"},
+            )
+        
+        elif action == "off":
+            await update_bot_state({"trading_enabled": False})
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"status": "ok", "message": "Trading disabled", "updated_value": "trading_enabled=false"},
+            )
+        
+        elif action == "leverage":
+            if not req.value:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"status": "error", "message": "leverage requires value"},
+                )
+            try:
+                leverage = int(req.value)
+                if leverage < 1 or leverage > 125:
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"status": "error", "message": "leverage must be 1-125"},
+                    )
+                await update_bot_state({"default_leverage": leverage})
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content={"status": "ok", "message": f"Leverage set to {leverage}x", "updated_value": f"default_leverage={leverage}"},
+                )
+            except ValueError:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"status": "error", "message": "Invalid leverage value"},
+                )
+        
+        elif action == "risk":
+            if not req.value or req.value.lower() not in ["low", "medium", "high"]:
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"status": "error", "message": "risk must be low|medium|high"},
+                )
+            risk = req.value.lower()
+            await update_bot_state({"risk_level": risk})
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={"status": "ok", "message": f"Risk set to {risk}", "updated_value": f"risk_level={risk}"},
+            )
+        
+        else:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"status": "error", "message": f"Unknown action: {action}. Use: on|off|leverage|risk"},
+            )
+    
+    except Exception as e:
+        logger.exception("/dashboard/control failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"status": "error", "error": str(e)},
+        )
+
+
+# ==============================================================
+# Stage 14: Backtest Engine
+# ==============================================================
+from app.engines.backtest.engine import run_backtest as _run_backtest
+
+
+@router.get("/backtest", summary="Backtest results (Stage 14)")
+async def get_backtest_results(limit: int = 1000) -> JSONResponse:
+    """Результаты backtesting на ai_decisions."""
+    try:
+        results = await _run_backtest(limit=limit)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=results)
+    except Exception as e:
+        logger.exception("/dashboard/backtest failed")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
