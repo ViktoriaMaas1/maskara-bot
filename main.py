@@ -26,6 +26,7 @@ from app.engines.order_flow.engine import get_order_flow_engine
 from app.engines.signals.cooldown import CooldownGate
 from app.engines.signals.generator import SignalGenerator
 from app.engines.signals.notifier import SignalNotifier
+from app.workers.auto_trade_worker import init_auto_trade_worker, close_auto_trade_worker
 from app.workers.signal_worker import close_signal_worker, init_signal_worker
 from app.database.db import get_sessionmaker
 from app.utils.redis_client import get_redis
