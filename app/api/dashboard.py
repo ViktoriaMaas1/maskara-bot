@@ -825,3 +825,39 @@ async def get_trade_history(limit: int = 20) -> JSONResponse:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"status": "error", "error": str(e)},
         )
+
+
+# ==============================================================
+# Stage 16: Auto Trading
+# ==============================================================
+from app.engines.auto_trader.trader import AutoTrader as _AutoTrader
+
+
+@router.post("/auto-trading/start", summary="Start auto trading")
+async def start_auto_trading() -> JSONResponse:
+    try:
+        await update_bot_state({"auto_trading_enabled": True})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok", "message": "Auto trading started"})
+    except Exception as e:
+        logger.exception("/auto-trading/start failed")
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"status": "error", "error": str(e)})
+
+
+@router.post("/auto-trading/stop", summary="Stop auto trading")
+async def stop_auto_trading() -> JSONResponse:
+    try:
+        await update_bot_state({"auto_trading_enabled": False})
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok", "message": "Auto trading stopped"})
+    except Exception as e:
+        logger.exception("/auto-trading/stop failed")
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"status": "error", "error": str(e)})
+
+
+@router.get("/auto-trading/status", summary="Auto trading status")
+async def get_auto_trading_status() -> JSONResponse:
+    try:
+        state = await get_bot_state()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"status": "ok", "auto_trading_enabled": state.get("auto_trading_enabled", False)})
+    except Exception as e:
+        logger.exception("/auto-trading/status failed")
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"status": "error", "error": str(e)})

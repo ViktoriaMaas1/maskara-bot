@@ -169,6 +169,27 @@ async def cmd_open_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(f"Error: {e}")
 
 
+
+
+async def cmd_auto_trading(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Управление автоматической торговлей"""
+    try:
+        if not context.args:
+            await update.message.reply_text("*Auto Trading*\n\n/auto_trading on — включить\n/auto_trading off — выключить", parse_mode='Markdown')
+            return
+        
+        action = context.args[0].lower()
+        if action == "on":
+            await update_bot_state({"auto_trading_enabled": True})
+            await update.message.reply_text("✅ Auto trading enabled!")
+        elif action == "off":
+            await update_bot_state({"auto_trading_enabled": False})
+            await update.message.reply_text("⛔ Auto trading disabled!")
+    except Exception as e:
+        logger.exception("cmd_auto_trading failed")
+        await update.message.reply_text(f"Error: {e}")
+
+
 def get_telegram_bot():
     """Инициализация бота"""
     settings = get_settings()
@@ -185,6 +206,7 @@ def get_telegram_bot():
     app.add_handler(CommandHandler("ai_report", cmd_ai_report))
     app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CommandHandler("open_trades", cmd_open_trades))
+    app.add_handler(CommandHandler("auto_trading", cmd_auto_trading))
     
     logger.info("Telegram bot initialized")
     return app
@@ -212,3 +234,27 @@ async def cmd_backtest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # Добавляем handler
     app.add_handler(CommandHandler("backtest", cmd_backtest))
     app.add_handler(CommandHandler("open_trades", cmd_open_trades))
+    app.add_handler(CommandHandler("auto_trading", cmd_auto_trading))
+
+
+async def cmd_auto_trading(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Управление автоматической торговлей: /auto_trading on|off"""
+    try:
+        if not context.args:
+            msg = "*Auto Trading Control*\n\n/auto_trading on — включить\n/auto_trading off — выключить"
+            await update.message.reply_text(msg, parse_mode='Markdown')
+            return
+        
+        action = context.args[0].lower()
+        
+        if action == "on":
+            await update_bot_state({"auto_trading_enabled": True})
+            await update.message.reply_text("✅ Auto trading enabled!")
+        elif action == "off":
+            await update_bot_state({"auto_trading_enabled": False})
+            await update.message.reply_text("⛔ Auto trading disabled!")
+        else:
+            await update.message.reply_text("Usage: /auto_trading on|off")
+    except Exception as e:
+        logger.exception("cmd_auto_trading failed")
+        await update.message.reply_text(f"Error: {e}")
